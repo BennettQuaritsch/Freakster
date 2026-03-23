@@ -1,0 +1,10 @@
+# API Clients
+spotipy                # Spotify Web API
+musicbrainzngs         # MusicBrainz API
+
+# Image Processing
+qrcode[pil]            # QR code generation with Pillow support
+Pillow                 # Image generation
+
+# Utilities
+python-dotenv          # Environment variable management
