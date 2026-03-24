@@ -3,8 +3,9 @@ spotipy                # Spotify Web API
 musicbrainzngs         # MusicBrainz API
 
 # Image Processing
-qrcode[pil]            # QR code generation with Pillow support
-Pillow                 # Image generation
+qrcode[pil]            # QR code generation
+cairosvg               # SVG template rendering to PNG
+reportlab              # A4 PDF generation and card layout
 
 # Utilities
 python-dotenv          # Environment variable management
