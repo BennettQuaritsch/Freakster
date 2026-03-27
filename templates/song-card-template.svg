@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="1600" height="800" viewBox="0 0 1600 800" role="img" aria-labelledby="title desc">
+  <title id="title">Song Card Fold Template</title>
+  <desc id="desc">2:1 foldable card template. Left side is front with QR. Right side is back with song metadata.</desc>
+
+  <defs>
+    <linearGradient id="frontBg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#2a0246"/>
+      <stop offset="100%" stop-color="#502300"/>
+    </linearGradient>
+
+    <linearGradient id="backBg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#f8fafc"/>
+      <stop offset="100%" stop-color="#e2e8f0"/>
+    </linearGradient>
+
+    <style>
+      .kicker { font: 700 28px "Helvetica Neue", Helvetica, Arial, sans-serif; letter-spacing: 0.12em; text-transform: uppercase; }
+      .meta-date { font: 700 64px "Helvetica Neue", Helvetica, Arial, sans-serif; }
+      .meta-song { font: 600 52px "Helvetica Neue", Helvetica, Arial, sans-serif; }
+      .meta-artist { font: 500 42px "Helvetica Neue", Helvetica, Arial, sans-serif; }
+    </style>
+  </defs>
+
+  <rect x="0" y="0" width="800" height="800" fill="url(#frontBg)"/>
+  <rect x="165" y="165" width="470" height="470" rx="26" fill="#ffffff"/>
+
+  <image id="qr-code" x="205" y="205" width="390" height="390" href="__QR_DATA_URI__" xlink:href="__QR_DATA_URI__" preserveAspectRatio="xMidYMid meet"/>
+
+  <rect x="800" y="0" width="800" height="800" fill="url(#backBg)"/>
+  <rect x="824" y="24" width="752" height="752" rx="24" fill="#ffffff" fill-opacity="0.9"/>
+
+  <!-- Keep placeholders as single text nodes so code replacement remains reliable. -->
+  <!-- For wrapped lines, inject tspans in code into these ids (artist-text, date-text, song-text). -->
+  <text id="artist-text" x="1200" y="170" text-anchor="middle" fill="#64748b" class="meta-artist">__ARTIST_NAME__</text>
+  <text id="date-text" x="1200" y="400" text-anchor="middle" fill="#0f172a" class="meta-date">__RELEASE_DATE__</text>
+  <text id="song-text" x="1200" y="650" text-anchor="middle" fill="#1e293b" class="meta-song">__SONG_NAME__</text>
+
+  <line x1="800" y1="0" x2="800" y2="800" stroke="#64748b" stroke-width="2" stroke-dasharray="8 8" stroke-opacity="0.45"/>
+</svg>
