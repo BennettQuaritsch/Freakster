@@ -1,0 +1,7 @@
+// Config.xcconfig.example
+// Copy this file to Config.xcconfig and fill in your Spotify credentials
+// Config.xcconfig is gitignored and should never be committed
+
+// Get your client ID from: https://developer.spotify.com/dashboard/applications
+SPOTIFY_CLIENT_ID = YOUR_SPOTIFY_CLIENT_ID_HERE
+SPOTIFY_REDIRECT_URL = freakster://spotify-auth-callback
