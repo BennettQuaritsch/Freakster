@@ -6,5 +6,4 @@ venv/
 
 # generated files
 output/
-templates/
 song-cards.json
