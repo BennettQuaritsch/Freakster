@@ -2,7 +2,7 @@
 
 Generate Hitster-like song cards from a Spotify playlist.
 
-## How to run
+## Python Scripts for Card generation
 
 ### Setup
 
@@ -37,3 +37,13 @@ Pack card PNGs into an A4 PDF for printing:
 
 - `--card-side-mm` is the folded card side length.
 - Printed card size is `2 * card-side-mm` by `card-side-mm`.
+
+## iOS app for playing
+
+### Setup
+
+Setup the `Config.xcconfig` file with the appropriate data.
+
+### Run the app
+
+Run the app using xCode. Click on the dot in the upper-right corner. This should navigate to the spotify app, where ou can authenticate the app. Then just scan the QR codes.
