@@ -1,1 +1,51 @@
 @import 'tailwindcss';
+
+:root {
+	--bg: #111827;
+	--primary: #ff6b5b;
+	--primary-hover: #ff7c6e;
+	--primary-active: #e85c4d;
+	--secondary: #ff9c92;
+	--secondary-hover: #ffb0a8;
+	--text-on-dark: #f3f4f6;
+	--text-on-primary: #111827;
+	--border-muted: #374151;
+
+	--surface-1: #1f2937;
+	--surface-2: #273447;
+	--surface-3: #2f3d52;
+}
+
+@theme {
+	--color-bg: var(--bg);
+	--color-primary: var(--primary);
+	--color-primary-hover: var(--primary-hover);
+	--color-primary-active: var(--primary-active);
+	--color-secondary: var(--secondary);
+	--color-secondary-hover: var(--secondary-hover);
+	--color-text-on-dark: var(--text-on-dark);
+	--color-text-on-primary: var(--text-on-primary);
+	--color-border-muted: var(--border-muted);
+	--color-surface-1: var(--surface-1);
+	--color-surface-2: var(--surface-2);
+	--color-surface-3: var(--surface-3);
+}
+
+@supports (color: color-mix(in srgb, black, white)) {
+	:root {
+		--surface-1: color-mix(in srgb, var(--bg), white 8%);
+		--surface-2: color-mix(in srgb, var(--bg), white 14%);
+		--surface-3: color-mix(in srgb, var(--bg), white 18%);
+	}
+}
+
+html,
+body {
+	min-height: 100%;
+	background-color: var(--color-bg);
+	color: var(--color-text-on-dark);
+}
+
+body {
+	margin: 0;
+}

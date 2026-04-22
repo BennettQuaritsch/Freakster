@@ -85,13 +85,15 @@ export async function findFirstReleaseDateByIsrc(isrc: string | null): Promise<s
 		const response = await fetchMusicBrainz(endpoint);
 
 		if (!response.ok) {
-			console.error(`[MusicBrainz] Request failed for ISRC ${isrc}: HTTP ${response.status} ${response.statusText}`);
+			console.error(
+				`[MusicBrainz] Request failed for ISRC ${isrc}: HTTP ${response.status} ${response.statusText}`
+			);
 			throw new Error(`MusicBrainz request failed: ${response.status}`);
 		}
 
 		const payload = (await response.json()) as MusicBrainzIsrcResponse;
 		const recordings = payload.recordings ?? [];
-		
+
 		console.log(`[MusicBrainz] Found ${recordings.length} recordings for ISRC: ${isrc}`);
 
 		const candidateDates: string[] = [];
@@ -123,15 +125,40 @@ export async function findFirstReleaseDateByIsrc(isrc: string | null): Promise<s
 	}
 }
 
-export async function enrichReleaseDates(songs: SongCardData[]): Promise<SongCardData[]> {
+export type EnrichReleaseDatesProgress = {
+	processed: number;
+	total: number;
+};
+
+type EnrichReleaseDatesProgressCallback = (progress: EnrichReleaseDatesProgress) => void;
+
+type EnrichReleaseDatesOptions = {
+	onProgress?: EnrichReleaseDatesProgressCallback;
+};
+
+export async function enrichReleaseDates(
+	songs: SongCardData[],
+	onProgressOrOptions?: EnrichReleaseDatesProgressCallback | EnrichReleaseDatesOptions
+): Promise<SongCardData[]> {
+	const onProgress: EnrichReleaseDatesProgressCallback | undefined =
+		typeof onProgressOrOptions === 'function'
+			? onProgressOrOptions
+			: onProgressOrOptions?.onProgress;
+
 	console.log(`[MusicBrainz] Starting release date enrichment for ${songs.length} songs...`);
 	const enriched: SongCardData[] = [];
 
 	for (let index = 0; index < songs.length; index += 1) {
 		const song = songs[index];
-		console.log(`[MusicBrainz] Processing song ${index + 1}/${songs.length}: ${song.song_name} by ${song.artist_name} (ISRC: ${song.isrc})`);
+		console.log(
+			`[MusicBrainz] Processing song ${index + 1}/${songs.length}: ${song.song_name} by ${song.artist_name} (ISRC: ${song.isrc})`
+		);
 		const releaseDate = await findFirstReleaseDateByIsrc(song.isrc).catch(() => null);
 		enriched.push({ ...song, release_date: releaseDate ?? song.release_date });
+		onProgress?.({
+			processed: index + 1,
+			total: songs.length
+		});
 
 		if (index < songs.length - 1) {
 			await sleep(REQUEST_INTERVAL_MS);

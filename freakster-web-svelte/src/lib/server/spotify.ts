@@ -31,12 +31,16 @@ type SpotifyPlaylistItemsResponse = {
 		track?: SpotifyTrack | null;
 		item?: SpotifyTrack | null;
 	}>;
+	total?: number;
 	next?: string | null;
 };
 
 type SpotifyPlaylistMetaResponse = {
 	id?: string;
 	name?: string;
+	images?: Array<{
+		url?: string;
+	}>;
 	public?: boolean | null;
 	collaborative?: boolean;
 	owner?: {
@@ -58,8 +62,28 @@ type SpotifyTokenResponse = {
 };
 
 export type PlaylistTracksResult = {
+	playlist: PlaylistMeta;
 	songs: SongCardData[];
 	skippedWithoutSpotifyUrl: number;
+};
+
+export type PlaylistMeta = {
+	name: string | null;
+	imageUrl: string | null;
+};
+
+export type PlaylistTracksProgress = {
+	fetchedItems: number;
+	totalItems: number | null;
+	songsCount: number;
+	skippedWithoutSpotifyUrl: number;
+	playlist?: PlaylistMeta;
+};
+
+type PlaylistTracksProgressCallback = (progress: PlaylistTracksProgress) => void;
+
+type PlaylistTracksProgressOptions = {
+	onProgress?: PlaylistTracksProgressCallback;
 };
 
 class SpotifyApiError extends Error {
@@ -508,12 +532,19 @@ async function fetchPlaylistMeta(
 	playlistId: string,
 	token: string
 ): Promise<SpotifyPlaylistMetaResponse | null> {
-	const metaUrl = `${SPOTIFY_API_BASE}/playlists/${playlistId}?fields=id,name,owner(id),public,collaborative`;
+	const metaUrl = `${SPOTIFY_API_BASE}/playlists/${playlistId}?fields=id,name,images(url),owner(id),public,collaborative`;
 	try {
 		return await fetchSpotifyJson<SpotifyPlaylistMetaResponse>(metaUrl, token);
 	} catch {
 		return null;
 	}
+}
+
+function toPlaylistMeta(meta: SpotifyPlaylistMetaResponse | null): PlaylistMeta {
+	return {
+		name: meta?.name?.trim() || null,
+		imageUrl: meta?.images?.[0]?.url?.trim() || null
+	};
 }
 
 function createPlaylistTracksUrl(playlistId: string): string {
@@ -527,8 +558,14 @@ function createPlaylistTracksUrl(playlistId: string): string {
 
 export async function getPlaylistTracks(
 	event: Pick<RequestEvent, 'url' | 'cookies'>,
-	playlistRef: string
+	playlistRef: string,
+	onProgressOrOptions?: PlaylistTracksProgressCallback | PlaylistTracksProgressOptions
 ): Promise<PlaylistTracksResult> {
+	const onProgress: PlaylistTracksProgressCallback | undefined =
+		typeof onProgressOrOptions === 'function'
+			? onProgressOrOptions
+			: onProgressOrOptions?.onProgress;
+
 	const playlistId = extractPlaylistId(playlistRef);
 	let token = await getValidSpotifyAccessToken(event);
 	if (!token) {
@@ -536,9 +573,20 @@ export async function getPlaylistTracks(
 	}
 
 	let nextUrl: string | null = createPlaylistTracksUrl(playlistId);
+	const playlist = toPlaylistMeta(await fetchPlaylistMeta(playlistId, token));
 	const songs: SongCardData[] = [];
 	let skippedWithoutSpotifyUrl = 0;
+	let fetchedItems = 0;
+	let totalItems: number | null = null;
 	let hasRetriedWithRefresh = false;
+
+	onProgress?.({
+		fetchedItems,
+		totalItems,
+		songsCount: songs.length,
+		skippedWithoutSpotifyUrl,
+		playlist
+	});
 
 	while (nextUrl) {
 		let page: SpotifyPlaylistItemsResponse;
@@ -554,29 +602,36 @@ export async function getPlaylistTracks(
 				hasRetriedWithRefresh = true;
 				const refreshedToken = await refreshAccessToken(event);
 				if (!refreshedToken) {
-					throw new Error('Spotify authentication expired. Reconnect Spotify and try again.');
+					throw new Error('Spotify authentication expired. Reconnect Spotify and try again.', {
+						cause: error
+					});
 				}
 				token = refreshedToken;
 				continue;
 			}
 
 			if (error instanceof SpotifyApiError && error.status === 403) {
-				const playlistMeta = await fetchPlaylistMeta(playlistId, token);
+				const playlistMetaResponse = await fetchPlaylistMeta(playlistId, token);
 				const diagnostics = await diagnosePlaylist403(playlistId, token);
-				const visibility = playlistMeta
-					? `playlist-meta-public=${String(playlistMeta.public)}, playlist-meta-collaborative=${String(playlistMeta.collaborative)}`
+				const visibility = playlistMetaResponse
+					? `playlist-meta-public=${String(playlistMetaResponse.public)}, playlist-meta-collaborative=${String(playlistMetaResponse.collaborative)}`
 					: 'playlist-meta-public=unknown';
 				const suffix = diagnostics
 					? ` Diagnostics: ${visibility}, ${diagnostics}.`
 					: ` Diagnostics: ${visibility}.`;
-				throw new Error(`${error.message}${suffix}`);
+				throw new Error(`${error.message}${suffix}`, { cause: error });
 			}
 
 			throw error;
 		}
 
 		hasRetriedWithRefresh = false;
+		if (typeof page.total === 'number' && Number.isFinite(page.total)) {
+			totalItems = Math.max(0, Math.floor(page.total));
+		}
+
 		for (const item of page.items ?? []) {
+			fetchedItems += 1;
 			const track = item?.track ?? item?.item;
 			if (!track || track.type !== 'track') {
 				continue;
@@ -607,10 +662,19 @@ export async function getPlaylistTracks(
 			});
 		}
 
+		onProgress?.({
+			fetchedItems,
+			totalItems,
+			songsCount: songs.length,
+			skippedWithoutSpotifyUrl,
+			playlist
+		});
+
 		nextUrl = page.next ?? null;
 	}
 
 	return {
+		playlist,
 		songs,
 		skippedWithoutSpotifyUrl
 	};

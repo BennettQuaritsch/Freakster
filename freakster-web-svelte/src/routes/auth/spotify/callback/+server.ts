@@ -11,12 +11,18 @@ export const GET: RequestHandler = async (event) => {
 
 	if (error) {
 		clearSpotifyAuthCookies(event);
-		throw redirect(303, `${base}/?error=${encodeURIComponent('Spotify authorization was denied or canceled.')}`);
+		throw redirect(
+			303,
+			`${base}/?error=${encodeURIComponent('Spotify authorization was denied or canceled.')}`
+		);
 	}
 
 	if (!code) {
 		clearSpotifyAuthCookies(event);
-		throw redirect(303, `${base}/?error=${encodeURIComponent('Missing Spotify authorization code.')}`);
+		throw redirect(
+			303,
+			`${base}/?error=${encodeURIComponent('Missing Spotify authorization code.')}`
+		);
 	}
 
 	try {
@@ -24,9 +30,7 @@ export const GET: RequestHandler = async (event) => {
 	} catch (authError) {
 		clearSpotifyAuthCookies(event);
 		const message =
-			authError instanceof Error
-				? authError.message
-				: 'Failed to complete Spotify authentication.';
+			authError instanceof Error ? authError.message : 'Failed to complete Spotify authentication.';
 		throw redirect(303, `${base}/?error=${encodeURIComponent(message)}`);
 	}
 
