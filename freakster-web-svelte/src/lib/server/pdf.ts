@@ -1,5 +1,6 @@
 import { PDFDocument, PageSizes } from 'pdf-lib';
 
+import { badRequest } from '$lib/server/http-errors';
 import type { SongCardImageBytes } from '$lib/types/song-card';
 
 const MM_TO_PT = 72 / 25.4;
@@ -43,7 +44,7 @@ export async function buildCardsPdf(
 	const rows = Math.floor((usableHeight + gap) / (cardHeight + gap));
 
 	if (cols < 1 || rows < 1) {
-		throw new Error('Card size and margins are too large for an A4 page');
+		badRequest('Card size and margins are too large for an A4 page');
 	}
 
 	const perPage = cols * rows;

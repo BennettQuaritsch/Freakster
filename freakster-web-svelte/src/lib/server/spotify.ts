@@ -1,6 +1,7 @@
 import { env } from '$env/dynamic/private';
 import type { Cookies, RequestEvent } from '@sveltejs/kit';
 
+import type { PlaylistMetadata } from '$lib/types/api';
 import type { SongCardData } from '$lib/types/song-card';
 
 const SPOTIFY_AUTHORIZE_URL = 'https://accounts.spotify.com/authorize';
@@ -62,14 +63,9 @@ type SpotifyTokenResponse = {
 };
 
 export type PlaylistTracksResult = {
-	playlist: PlaylistMeta;
+	playlist: PlaylistMetadata;
 	songs: SongCardData[];
 	skippedWithoutSpotifyUrl: number;
-};
-
-export type PlaylistMeta = {
-	name: string | null;
-	imageUrl: string | null;
 };
 
 export type PlaylistTracksProgress = {
@@ -77,7 +73,7 @@ export type PlaylistTracksProgress = {
 	totalItems: number | null;
 	songsCount: number;
 	skippedWithoutSpotifyUrl: number;
-	playlist?: PlaylistMeta;
+	playlist?: PlaylistMetadata;
 };
 
 type PlaylistTracksProgressCallback = (progress: PlaylistTracksProgress) => void;
@@ -345,6 +341,56 @@ export async function getValidSpotifyAccessToken(
 	return refreshAccessToken(event);
 }
 
+async function probeSpotifyToken(token: string): Promise<'valid' | 'invalid' | 'unknown'> {
+	try {
+		const response = await fetch(`${SPOTIFY_API_BASE}/me`, {
+			headers: {
+				Authorization: `Bearer ${token}`
+			}
+		});
+
+		if (response.status === 401 || response.status === 403) {
+			return 'invalid';
+		}
+
+		if (response.ok) {
+			return 'valid';
+		}
+
+		return 'unknown';
+	} catch {
+		return 'unknown';
+	}
+}
+
+export async function hasValidSpotifySession(
+	event: Pick<RequestEvent, 'url' | 'cookies'>
+): Promise<boolean> {
+	const token = event.cookies.get(ACCESS_TOKEN_COOKIE);
+	const expiresAtRaw = event.cookies.get(EXPIRES_AT_COOKIE);
+	const expiresAt = expiresAtRaw ? Number(expiresAtRaw) : 0;
+	const hadFreshAccessToken = Boolean(
+		token && Number.isFinite(expiresAt) && Date.now() < expiresAt
+	);
+
+	const validToken = await getValidSpotifyAccessToken(event);
+	if (!validToken) {
+		return false;
+	}
+
+	if (hadFreshAccessToken) {
+		return true;
+	}
+
+	const probeResult = await probeSpotifyToken(validToken);
+	if (probeResult === 'invalid') {
+		clearSpotifyAuthCookies(event);
+		return false;
+	}
+
+	return true;
+}
+
 export function hasSpotifySession(cookies: Cookies): boolean {
 	return Boolean(cookies.get(REFRESH_TOKEN_COOKIE) || cookies.get(ACCESS_TOKEN_COOKIE));
 }
@@ -540,7 +586,7 @@ async function fetchPlaylistMeta(
 	}
 }
 
-function toPlaylistMeta(meta: SpotifyPlaylistMetaResponse | null): PlaylistMeta {
+function toPlaylistMeta(meta: SpotifyPlaylistMetaResponse | null): PlaylistMetadata {
 	return {
 		name: meta?.name?.trim() || null,
 		imageUrl: meta?.images?.[0]?.url?.trim() || null

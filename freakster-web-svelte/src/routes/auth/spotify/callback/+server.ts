@@ -1,5 +1,5 @@
 import { redirect } from '@sveltejs/kit';
-import { base } from '$app/paths';
+import { resolve } from '$app/paths';
 
 import { clearSpotifyAuthCookies, exchangeAuthorizationCode } from '$lib/server/spotify';
 import type { RequestHandler } from './$types';
@@ -13,7 +13,7 @@ export const GET: RequestHandler = async (event) => {
 		clearSpotifyAuthCookies(event);
 		throw redirect(
 			303,
-			`${base}/?error=${encodeURIComponent('Spotify authorization was denied or canceled.')}`
+			`${resolve('/')}?error=${encodeURIComponent('Spotify authorization was denied or canceled.')}`
 		);
 	}
 
@@ -21,7 +21,7 @@ export const GET: RequestHandler = async (event) => {
 		clearSpotifyAuthCookies(event);
 		throw redirect(
 			303,
-			`${base}/?error=${encodeURIComponent('Missing Spotify authorization code.')}`
+			`${resolve('/')}?error=${encodeURIComponent('Missing Spotify authorization code.')}`
 		);
 	}
 
@@ -31,8 +31,8 @@ export const GET: RequestHandler = async (event) => {
 		clearSpotifyAuthCookies(event);
 		const message =
 			authError instanceof Error ? authError.message : 'Failed to complete Spotify authentication.';
-		throw redirect(303, `${base}/?error=${encodeURIComponent(message)}`);
+		throw redirect(303, `${resolve('/')}?error=${encodeURIComponent(message)}`);
 	}
 
-	throw redirect(303, `${base}/?spotify=connected`);
+	throw redirect(303, `${resolve('/')}?spotify=connected`);
 };

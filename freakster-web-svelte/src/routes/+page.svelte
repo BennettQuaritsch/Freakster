@@ -1,38 +1,13 @@
 <script lang="ts">
-	import { base } from '$app/paths';
+	import { resolve } from '$app/paths';
 	import { onDestroy } from 'svelte';
 
 	import { classifyReleaseDate, type DateValidationStatus } from '$lib/date-validation';
+	import type { PlaylistJobResponse } from '$lib/types/api';
 	import type { SongCardData } from '$lib/types/song-card';
 	import type { PageData } from './$types';
 
 	type UiPhase = 'idle' | 'loading' | 'review' | 'error';
-	type PlaylistJobStatus = 'running' | 'done' | 'error';
-	type PlaylistJobStage = 'queued' | 'downloading' | 'enhancing' | 'done' | 'error';
-
-	type PlaylistJobProgress = {
-		current: number;
-		total: number | null;
-		percent: number | null;
-		message: string;
-	};
-
-	type PlaylistMetadata = {
-		name: string | null;
-		imageUrl: string | null;
-	};
-
-	type PlaylistJobResponse = {
-		jobId: string;
-		status: PlaylistJobStatus;
-		stage: PlaylistJobStage;
-		progress: PlaylistJobProgress;
-		playlist: PlaylistMetadata;
-		skippedWithoutSpotifyUrl: number;
-		error: string | null;
-		songs: SongCardData[] | null;
-	};
-
 	type EditableSong = SongCardData & {
 		rowId: string;
 	};
@@ -83,7 +58,7 @@
 	let progressTotal = $state<number | null>(null);
 	let skippedCount = $state(0);
 	let hasPlaylistMetadata = $state(false);
-	let playlistMetadata = $state<PlaylistMetadata>({ name: null, imageUrl: null });
+	let playlistMetadata = $state<PlaylistJobResponse['playlist']>({ name: null, imageUrl: null });
 	let currentPlaylistImageUrl = $state<string | null>(null);
 	let playlistImageUnavailable = $state(false);
 
@@ -169,22 +144,35 @@
 		}));
 	}
 
-	function updateReleaseDate(index: number, value: string): void {
-		editedSongs[index].release_date = value;
+	function updateSongField<K extends 'release_date' | 'song_name' | 'artist_name'>(
+		index: number,
+		field: K,
+		value: EditableSong[K]
+	): void {
+		editedSongs[index][field] = value;
 		editedSongs = [...editedSongs];
 		clearExportMessages();
 	}
 
-	function updateSongName(index: number, value: string): void {
-		editedSongs[index].song_name = value;
-		editedSongs = [...editedSongs];
-		clearExportMessages();
+	function getExportValidationError(): string | null {
+		if (hasInvalidRows) {
+			return 'Fix invalid release dates before exporting. Allowed formats: YYYY-MM-DD, YYYY-MM, YYYY, or blank.';
+		}
+
+		if (!hasSongs) {
+			return 'No songs to export yet.';
+		}
+
+		return null;
 	}
 
-	function updateArtistName(index: number, value: string): void {
-		editedSongs[index].artist_name = value;
-		editedSongs = [...editedSongs];
-		clearExportMessages();
+	function downloadBlob(blob: Blob, filename: string): void {
+		const url = URL.createObjectURL(blob);
+		const link = document.createElement('a');
+		link.href = url;
+		link.download = filename;
+		link.click();
+		URL.revokeObjectURL(url);
 	}
 
 	function getResponseError(payload: unknown, fallback: string): string {
@@ -228,7 +216,7 @@
 		phase = 'loading';
 
 		try {
-			const response = await fetch(`${base}/api/playlist-jobs`, {
+			const response = await fetch(resolve('/api/playlist-jobs'), {
 				method: 'POST',
 				credentials: 'same-origin',
 				headers: {
@@ -267,7 +255,7 @@
 
 	async function pollPlaylistJob(jobId: string): Promise<void> {
 		try {
-			const response = await fetch(`${base}/api/playlist-jobs/${jobId}`, {
+			const response = await fetch(resolve(`/api/playlist-jobs/${jobId}`), {
 				method: 'GET',
 				credentials: 'same-origin',
 				headers: {
@@ -323,14 +311,9 @@
 	async function exportPdf(): Promise<void> {
 		clearExportMessages();
 
-		if (hasInvalidRows) {
-			exportError =
-				'Fix invalid release dates before exporting. Allowed formats: YYYY-MM-DD, YYYY-MM, YYYY, or blank.';
-			return;
-		}
-
-		if (!hasSongs) {
-			exportError = 'No songs to export yet.';
+		const validationError = getExportValidationError();
+		if (validationError) {
+			exportError = validationError;
 			return;
 		}
 
@@ -338,7 +321,7 @@
 
 		try {
 			const payloadSongs = normalizeSongsForExport(editedSongs);
-			const response = await fetch(`${base}/api/generate-pdf`, {
+			const response = await fetch(resolve('/api/generate-pdf'), {
 				method: 'POST',
 				credentials: 'same-origin',
 				headers: {
@@ -358,12 +341,7 @@
 			const filename =
 				fileNameMatch?.[1] ?? `song-cards-${new Date().toISOString().slice(0, 10)}.pdf`;
 
-			const url = URL.createObjectURL(blob);
-			const link = document.createElement('a');
-			link.href = url;
-			link.download = filename;
-			link.click();
-			URL.revokeObjectURL(url);
+			downloadBlob(blob, filename);
 
 			exportSuccess = 'PDF generated and download started.';
 		} catch (error) {
@@ -377,14 +355,9 @@
 	function exportJson(): void {
 		clearExportMessages();
 
-		if (hasInvalidRows) {
-			exportError =
-				'Fix invalid release dates before exporting. Allowed formats: YYYY-MM-DD, YYYY-MM, YYYY, or blank.';
-			return;
-		}
-
-		if (!hasSongs) {
-			exportError = 'No songs to export yet.';
+		const validationError = getExportValidationError();
+		if (validationError) {
+			exportError = validationError;
 			return;
 		}
 
@@ -393,12 +366,7 @@
 			const jsonBlob = new Blob([JSON.stringify(payloadSongs, null, 2)], {
 				type: 'application/json'
 			});
-			const url = URL.createObjectURL(jsonBlob);
-			const link = document.createElement('a');
-			link.href = url;
-			link.download = `song-cards-${new Date().toISOString().slice(0, 10)}.json`;
-			link.click();
-			URL.revokeObjectURL(url);
+			downloadBlob(jsonBlob, `song-cards-${new Date().toISOString().slice(0, 10)}.json`);
 
 			exportSuccess = 'JSON exported.';
 		} catch (error) {
@@ -420,28 +388,23 @@
 	/>
 </svelte:head>
 
-<main class="min-h-[100svh] bg-bg text-text-on-dark">
-	<section class="mx-auto flex min-h-[100svh] w-full max-w-6xl flex-col items-center px-6 py-10">
+<main class="min-h-svh bg-bg text-text-on-dark">
+	<section class="mx-auto flex min-h-svh w-full max-w-6xl flex-col items-center px-6 py-10">
 		<div
 			class="my-auto w-full max-w-5xl rounded-3xl border border-border-muted bg-surface-1 p-8 shadow-2xl shadow-black/40"
 		>
-			<div class="flex flex-wrap items-start justify-between gap-4">
+			<div class="flex flex-col-reverse gap-4 sm:flex-row sm:items-start sm:justify-between">
 				<div>
-					<p class="text-xs font-semibold tracking-[0.2em] text-secondary uppercase">
-						Freakster Web
-					</p>
-					<h1 class="mt-3 text-4xl leading-tight font-black text-primary sm:text-5xl">
-						Spotify Playlist Song Cards
-					</h1>
+					<h1 class="text-4xl leading-tight font-black text-primary sm:text-5xl">Freakster</h1>
 					<p class="mt-4 max-w-3xl text-sm text-text-on-dark sm:text-base">
 						Load playlist songs first, then review and adjust release dates before exporting PDF or
 						JSON.
 					</p>
 				</div>
 
-				<div class="ml-auto flex items-center gap-2 self-start">
+				<div class="flex items-center gap-2 self-end sm:shrink-0 sm:self-start">
 					<span
-						class={`inline-flex items-center rounded-full border px-3 py-1 text-xs font-semibold ${
+						class={`inline-flex shrink-0 items-center rounded-full border px-3 py-1 text-xs font-semibold whitespace-nowrap ${
 							data.spotifyConnected
 								? 'border-emerald-300/40 bg-emerald-900/40 text-emerald-200'
 								: 'border-red-300/40 bg-red-900/30 text-red-200'
@@ -451,7 +414,7 @@
 					</span>
 
 					{#if data.spotifyConnected}
-						<form method="GET" action={`${base}/auth/spotify`}>
+						<form method="GET" action={resolve('/auth/spotify')} class="inline-flex">
 							<div class="group relative inline-flex">
 								<button
 									type="submit"
@@ -480,7 +443,7 @@
 								</span>
 							</div>
 						</form>
-						<form method="POST" action="?/disconnectSpotify">
+						<form method="POST" action="?/disconnectSpotify" class="inline-flex">
 							<div class="group relative inline-flex">
 								<button
 									type="submit"
@@ -505,14 +468,22 @@
 							</div>
 						</form>
 					{:else}
-						<form method="GET" action={`${base}/auth/spotify`}>
+						<form method="GET" action={resolve('/auth/spotify')} class="inline-flex">
 							<input type="hidden" name="force" value="1" />
-							<button
-								type="submit"
-								class="inline-flex items-center justify-center rounded-xl bg-primary px-4 py-2 text-xs font-bold text-text-on-primary transition hover:bg-primary-hover active:bg-primary-active"
-							>
-								Connect Spotify
-							</button>
+							<div class="group relative inline-flex">
+								<button
+									type="submit"
+									aria-label="Connect Spotify"
+									class="inline-flex h-9 items-center justify-center rounded-xl bg-primary px-4 text-xs leading-none font-bold text-text-on-primary transition hover:bg-primary-hover active:bg-primary-active"
+								>
+									Connect Spotify
+								</button>
+								<span
+									class="pointer-events-none absolute top-full left-1/2 z-10 mt-2 -translate-x-1/2 rounded-md border border-border-muted bg-surface-2 px-2 py-1 text-xs whitespace-nowrap text-text-on-dark opacity-0 shadow-lg transition group-focus-within:opacity-100 group-hover:opacity-100"
+								>
+									Connect Spotify
+								</span>
+							</div>
 						</form>
 					{/if}
 				</div>
@@ -658,7 +629,11 @@
 												type="text"
 												value={song.song_name}
 												oninput={(event) =>
-													updateSongName(index, (event.currentTarget as HTMLInputElement).value)}
+													updateSongField(
+														index,
+														'song_name',
+														(event.currentTarget as HTMLInputElement).value
+													)}
 												class="w-full rounded-lg border border-border-muted bg-surface-3 px-3 py-2 text-sm text-text-on-dark transition outline-none focus:border-primary"
 											/>
 										</td>
@@ -667,7 +642,11 @@
 												type="text"
 												value={song.artist_name}
 												oninput={(event) =>
-													updateArtistName(index, (event.currentTarget as HTMLInputElement).value)}
+													updateSongField(
+														index,
+														'artist_name',
+														(event.currentTarget as HTMLInputElement).value
+													)}
 												class="w-full rounded-lg border border-border-muted bg-surface-3 px-3 py-2 text-sm text-text-on-dark transition outline-none focus:border-primary"
 											/>
 										</td>
@@ -676,7 +655,11 @@
 												type="text"
 												value={song.release_date ?? ''}
 												oninput={(event) =>
-													updateReleaseDate(index, (event.currentTarget as HTMLInputElement).value)}
+													updateSongField(
+														index,
+														'release_date',
+														(event.currentTarget as HTMLInputElement).value
+													)}
 												placeholder="YYYY-MM-DD"
 												class={`w-full rounded-lg border bg-surface-3 px-3 py-2 text-sm text-text-on-dark transition outline-none ${meta.inputClass}`}
 											/>

@@ -1,18 +1,12 @@
 import type { SongCardData } from '$lib/types/song-card';
-import type { PlaylistMeta } from '$lib/server/spotify';
+import type {
+	PlaylistJobProgress,
+	PlaylistJobStage,
+	PlaylistJobStatus,
+	PlaylistMetadata
+} from '$lib/types/api';
 
 const JOB_TTL_MS = 30 * 60 * 1000;
-
-export type PlaylistJobStatus = 'running' | 'done' | 'error';
-
-export type PlaylistJobStage = 'queued' | 'downloading' | 'enhancing' | 'done' | 'error';
-
-export type PlaylistJobProgress = {
-	current: number;
-	total: number | null;
-	percent: number | null;
-	message: string;
-};
 
 export type PlaylistJobRecord = {
 	jobId: string;
@@ -20,7 +14,7 @@ export type PlaylistJobRecord = {
 	status: PlaylistJobStatus;
 	stage: PlaylistJobStage;
 	progress: PlaylistJobProgress;
-	playlist: PlaylistMeta;
+	playlist: PlaylistMetadata;
 	skippedWithoutSpotifyUrl: number;
 	songs: SongCardData[] | null;
 	error: string | null;
@@ -108,7 +102,7 @@ export function updatePlaylistJob(
 		stage: PlaylistJobStage;
 		progress: PlaylistJobProgress;
 		skippedWithoutSpotifyUrl?: number;
-		playlist?: PlaylistMeta;
+		playlist?: PlaylistMetadata;
 	}
 ): void {
 	const job = jobs.get(jobId);
@@ -132,7 +126,7 @@ export function markPlaylistJobDone(
 	data: {
 		songs: SongCardData[];
 		skippedWithoutSpotifyUrl: number;
-		playlist?: PlaylistMeta;
+		playlist?: PlaylistMetadata;
 	}
 ): void {
 	const job = jobs.get(jobId);

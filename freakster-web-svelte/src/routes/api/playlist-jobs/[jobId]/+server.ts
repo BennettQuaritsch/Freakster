@@ -1,36 +1,24 @@
 import { json } from '@sveltejs/kit';
 
+import { requireAppSessionId, requireJobId, requireSpotifyAuth } from '$lib/server/guards';
+import { notFound, toErrorResponse } from '$lib/server/http-errors';
 import { getPlaylistJob } from '$lib/server/playlist-jobs';
-import { getValidSpotifyAccessToken } from '$lib/server/spotify';
+import type { PlaylistJobResponse } from '$lib/types/api';
 import type { RequestHandler } from './$types';
 
-const APP_SESSION_COOKIE = 'freakster_app_session';
-
 export const GET: RequestHandler = async (event) => {
-	if (!(await getValidSpotifyAccessToken(event))) {
-		return json(
-			{ error: 'Spotify authentication required. Connect Spotify and try again.' },
-			{ status: 401 }
-		);
-	}
+	try {
+		await requireSpotifyAuth(event);
 
-	const jobId = event.params.jobId?.trim() ?? '';
-	if (!jobId) {
-		return json({ error: 'Missing job id.' }, { status: 400 });
-	}
+		const jobId = requireJobId(event.params.jobId);
+		const ownerSessionId = requireAppSessionId(event);
 
-	const ownerSessionId = event.cookies.get(APP_SESSION_COOKIE)?.trim() ?? '';
-	if (!ownerSessionId) {
-		return json({ error: 'Playlist job not found or expired.' }, { status: 404 });
-	}
+		const job = getPlaylistJob(jobId, ownerSessionId);
+		if (!job) {
+			notFound('Playlist job not found or expired.');
+		}
 
-	const job = getPlaylistJob(jobId, ownerSessionId);
-	if (!job) {
-		return json({ error: 'Playlist job not found or expired.' }, { status: 404 });
-	}
-
-	return json(
-		{
+		const response: PlaylistJobResponse = {
 			jobId: job.jobId,
 			status: job.status,
 			stage: job.stage,
@@ -39,11 +27,14 @@ export const GET: RequestHandler = async (event) => {
 			skippedWithoutSpotifyUrl: job.skippedWithoutSpotifyUrl,
 			error: job.error,
 			songs: job.status === 'done' ? (job.songs ?? []) : null
-		},
-		{
+		};
+
+		return json(response, {
 			headers: {
 				'Cache-Control': 'no-store'
 			}
-		}
-	);
+		});
+	} catch (error) {
+		return toErrorResponse(error, 'Unexpected playlist polling error.');
+	}
 };

@@ -1,9 +1,10 @@
-import { clearSpotifyAuthCookies, hasSpotifySession } from '$lib/server/spotify';
+import { clearSpotifyAuthCookies, hasValidSpotifySession } from '$lib/server/spotify';
 import type { Actions, PageServerLoad } from './$types';
 
-export const load: PageServerLoad = async ({ cookies, url }) => {
+export const load: PageServerLoad = async (event) => {
+	const { url } = event;
 	const error = url.searchParams.get('error');
-	const spotifyConnected = hasSpotifySession(cookies);
+	const spotifyConnected = await hasValidSpotifySession(event);
 
 	return {
 		error,

@@ -1,38 +1,17 @@
 import { json } from '@sveltejs/kit';
 
+import { getOrCreateAppSessionId, parseJsonBody, requireSpotifyAuth } from '$lib/server/guards';
+import { toErrorResponse } from '$lib/server/http-errors';
 import {
 	createPlaylistJob,
 	markPlaylistJobDone,
 	markPlaylistJobError,
 	updatePlaylistJob
 } from '$lib/server/playlist-jobs';
+import { parseCreatePlaylistJobPayload } from '$lib/server/schemas/playlist-jobs';
 import { enrichReleaseDates } from '$lib/server/musicbrainz';
-import {
-	getPlaylistTracks,
-	getValidSpotifyAccessToken,
-	type PlaylistTracksProgress
-} from '$lib/server/spotify';
+import { getPlaylistTracks, type PlaylistTracksProgress } from '$lib/server/spotify';
 import type { RequestHandler } from './$types';
-
-const APP_SESSION_COOKIE = 'freakster_app_session';
-
-function getOrCreateAppSessionId(event: Parameters<RequestHandler>[0]): string {
-	const existing = event.cookies.get(APP_SESSION_COOKIE)?.trim() ?? '';
-	if (existing) {
-		return existing;
-	}
-
-	const sessionId = crypto.randomUUID();
-	event.cookies.set(APP_SESSION_COOKIE, sessionId, {
-		path: '/',
-		httpOnly: true,
-		sameSite: 'lax',
-		secure: event.url.protocol === 'https:',
-		maxAge: 60 * 60 * 24 * 365
-	});
-
-	return sessionId;
-}
 
 function toDownloadProgressLabel(progress: PlaylistTracksProgress): string {
 	if (progress.totalItems && progress.totalItems > 0) {
@@ -123,50 +102,40 @@ async function runPlaylistJob(
 }
 
 export const POST: RequestHandler = async (event) => {
-	if (!(await getValidSpotifyAccessToken(event))) {
-		return json(
-			{ error: 'Spotify authentication required. Connect Spotify and try again.' },
-			{ status: 401 }
-		);
-	}
-
-	let playlistRef: string;
 	try {
-		const payload = (await event.request.json()) as { playlistRef?: string };
-		playlistRef = payload.playlistRef?.trim() ?? '';
-	} catch {
-		return json({ error: 'Invalid request payload.' }, { status: 400 });
-	}
+		await requireSpotifyAuth(event);
 
-	if (!playlistRef) {
-		return json({ error: 'Please enter a Spotify playlist URL, URI, or ID.' }, { status: 400 });
-	}
+		const payload = await parseJsonBody(event);
+		const { playlistRef } = parseCreatePlaylistJobPayload(payload);
 
-	const ownerSessionId = getOrCreateAppSessionId(event);
-	const job = createPlaylistJob(playlistRef, ownerSessionId);
-	updatePlaylistJob(job.jobId, {
-		stage: 'downloading',
-		progress: {
-			current: 0,
-			total: null,
-			percent: 0,
-			message: 'Downloading songs...'
-		},
-		skippedWithoutSpotifyUrl: 0
-	});
+		const ownerSessionId = getOrCreateAppSessionId(event);
+		const job = createPlaylistJob(playlistRef, ownerSessionId);
+		updatePlaylistJob(job.jobId, {
+			stage: 'downloading',
+			progress: {
+				current: 0,
+				total: null,
+				percent: 0,
+				message: 'Downloading songs...'
+			},
+			skippedWithoutSpotifyUrl: 0
+		});
 
-	void runPlaylistJob(event, job.jobId, playlistRef);
+		void runPlaylistJob(event, job.jobId, playlistRef);
 
-	return json(
-		{
-			jobId: job.jobId,
-			status: 'running'
-		},
-		{
-			status: 202,
-			headers: {
-				'Cache-Control': 'no-store'
+		return json(
+			{
+				jobId: job.jobId,
+				status: 'running'
+			},
+			{
+				status: 202,
+				headers: {
+					'Cache-Control': 'no-store'
+				}
 			}
-		}
-	);
+		);
+	} catch (error) {
+		return toErrorResponse(error, 'Unexpected playlist job creation error.');
+	}
 };
