@@ -1,19 +1,54 @@
 @import 'tailwindcss';
 
-:root {
-	--bg: #111827;
-	--primary: #ff6b5b;
-	--primary-hover: #ff7c6e;
-	--primary-active: #e85c4d;
-	--secondary: #ff9c92;
-	--secondary-hover: #ffb0a8;
-	--text-on-dark: #f3f4f6;
-	--text-on-primary: #111827;
-	--border-muted: #374151;
+/*
+ * Freakster color system — OKLCH
+ *
+ * Noir background, Rose primary, Amber secondary.
+ * All neutrals tinted toward rose (chroma 0.006–0.01).
+ * Strategy: Committed — rose carries ~25% visual weight.
+ */
 
-	--surface-1: #1f2937;
-	--surface-2: #273447;
-	--surface-3: #2f3d52;
+:root {
+	/* Background — near-black with warm rose undertone */
+	--bg: oklch(0.12 0.008 350);
+
+	/* Rose primary scale */
+	--primary: oklch(0.65 0.16 350);
+	--primary-hover: oklch(0.70 0.17 350);
+	--primary-active: oklch(0.58 0.15 350);
+	--primary-muted: oklch(0.65 0.16 350 / 0.15);
+
+	/* Secondary — warm amber, complementary to rose */
+	--secondary: oklch(0.78 0.12 75);
+	--secondary-hover: oklch(0.83 0.13 75);
+
+	/* Text */
+	--text-primary: oklch(0.93 0.006 350);
+	--text-secondary: oklch(0.70 0.01 350);
+	--text-on-primary: oklch(0.13 0.008 350);
+
+	/* Borders */
+	--border-muted: oklch(0.25 0.01 350);
+	--border-subtle: oklch(0.20 0.008 350);
+
+	/* Surfaces — progressive lightening, rose-tinted */
+	--surface-1: oklch(0.16 0.008 350);
+	--surface-2: oklch(0.19 0.009 350);
+	--surface-3: oklch(0.22 0.01 350);
+
+	/* Semantic status */
+	--status-error: oklch(0.65 0.2 25);
+	--status-error-muted: oklch(0.65 0.2 25 / 0.12);
+	--status-warning: oklch(0.78 0.15 75);
+	--status-warning-muted: oklch(0.78 0.15 75 / 0.12);
+	--status-caution: oklch(0.72 0.14 55);
+	--status-caution-muted: oklch(0.72 0.14 55 / 0.12);
+	--status-success: oklch(0.72 0.15 155);
+	--status-success-muted: oklch(0.72 0.15 155 / 0.12);
+
+	/* Typography */
+	--font-display: 'Space Grotesk', system-ui, sans-serif;
+	--font-body: 'Inter', system-ui, sans-serif;
 }
 
 @theme {
@@ -21,31 +56,47 @@
 	--color-primary: var(--primary);
 	--color-primary-hover: var(--primary-hover);
 	--color-primary-active: var(--primary-active);
+	--color-primary-muted: var(--primary-muted);
 	--color-secondary: var(--secondary);
 	--color-secondary-hover: var(--secondary-hover);
-	--color-text-on-dark: var(--text-on-dark);
+	--color-text-primary: var(--text-primary);
+	--color-text-secondary: var(--text-secondary);
 	--color-text-on-primary: var(--text-on-primary);
 	--color-border-muted: var(--border-muted);
+	--color-border-subtle: var(--border-subtle);
 	--color-surface-1: var(--surface-1);
 	--color-surface-2: var(--surface-2);
 	--color-surface-3: var(--surface-3);
-}
-
-@supports (color: color-mix(in srgb, black, white)) {
-	:root {
-		--surface-1: color-mix(in srgb, var(--bg), white 8%);
-		--surface-2: color-mix(in srgb, var(--bg), white 14%);
-		--surface-3: color-mix(in srgb, var(--bg), white 18%);
-	}
+	--color-status-error: var(--status-error);
+	--color-status-error-muted: var(--status-error-muted);
+	--color-status-warning: var(--status-warning);
+	--color-status-warning-muted: var(--status-warning-muted);
+	--color-status-caution: var(--status-caution);
+	--color-status-caution-muted: var(--status-caution-muted);
+	--color-status-success: var(--status-success);
+	--color-status-success-muted: var(--status-success-muted);
+	--font-family-display: var(--font-display);
+	--font-family-body: var(--font-body);
 }
 
 html,
 body {
 	min-height: 100%;
-	background-color: var(--color-bg);
-	color: var(--color-text-on-dark);
+	background-color: var(--bg);
+	color: var(--text-primary);
+	font-family: var(--font-body);
 }
 
 body {
 	margin: 0;
+}
+
+/* Focus styles */
+:focus-visible {
+	outline: 2px solid var(--primary);
+	outline-offset: 2px;
+}
+
+:focus:not(:focus-visible) {
+	outline: none;
 }
