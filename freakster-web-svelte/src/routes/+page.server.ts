@@ -1,4 +1,5 @@
 import { clearSpotifyAuthCookies, hasValidSpotifySession } from '$lib/server/spotify';
+import pkg from '../../package.json' with { type: 'json' };
 import type { Actions, PageServerLoad } from './$types';
 
 export const load: PageServerLoad = async (event) => {
@@ -9,7 +10,8 @@ export const load: PageServerLoad = async (event) => {
 	return {
 		error,
 		spotifyConnected,
-		justConnected: url.searchParams.get('spotify') === 'connected'
+		justConnected: url.searchParams.get('spotify') === 'connected',
+		version: pkg.version
 	};
 };
 

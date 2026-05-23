@@ -20,6 +20,8 @@
 	};
 
 	const POLL_INTERVAL_MS = 1200;
+	const SPOTIFY_PLAYLIST_PATTERN =
+		/^(?:https?:\/\/open\.spotify\.com\/(?:intl-[a-z]{2}\/)?playlist\/[A-Za-z0-9]+(?:[?#].*)?|spotify:playlist:[A-Za-z0-9]+|[A-Za-z0-9]{22})$/;
 
 	const DATE_STATUS_META: Record<DateValidationStatus, DateStatusMeta> = {
 		missing: {
@@ -72,6 +74,7 @@
 	let pollTimer: ReturnType<typeof setTimeout> | null = null;
 
 	const isRunning = $derived(phase === 'loading');
+	const isValidPlaylistRef = $derived(SPOTIFY_PLAYLIST_PATTERN.test(playlistRef.trim()));
 	const hasSongs = $derived(editedSongs.length > 0);
 	const songStatuses = $derived(editedSongs.map((song) => classifyReleaseDate(song.release_date)));
 	const invalidCount = $derived(songStatuses.filter((status) => status === 'invalid').length);
@@ -393,7 +396,7 @@
 	<!-- Ambient rose glow, single decorative element -->
 	<div
 		aria-hidden="true"
-		class="pointer-events-none absolute -top-40 left-1/2 h-160 w-160 -translate-x-1/2 rounded-full opacity-40 blur-[120px]"
+		class="pointer-events-none absolute -top-10 left-1/2 h-160 w-160 -translate-x-1/2 rounded-full opacity-40 blur-[120px]"
 		style="background: radial-gradient(circle, var(--primary) 0%, transparent 60%);"
 	></div>
 
@@ -401,17 +404,27 @@
 		<!-- Header: wordmark + spotify status -->
 		<header class="flex items-start justify-between gap-6">
 			<div class="flex items-center gap-3">
-				<!-- Mark: rose disc with notch -->
-				<div class="relative h-10 w-10 shrink-0">
-					<div class="absolute inset-0 rounded-full bg-primary"></div>
-					<div class="absolute inset-[35%] rounded-full bg-bg"></div>
-				</div>
+				<!-- Mark: waveform glyph -->
+				<svg
+					viewBox="0 0 32 32"
+					fill="currentColor"
+					aria-hidden="true"
+					class="h-10 w-10 shrink-0 text-primary"
+				>
+					<path d="M4,13c-0.6,0-1,0.4-1,1v4c0,0.6,0.4,1,1,1s1-0.4,1-1v-4C5,13.4,4.6,13,4,13z" />
+					<path d="M8,11c-0.6,0-1,0.4-1,1v8c0,0.6,0.4,1,1,1s1-0.4,1-1v-8C9,11.4,8.6,11,8,11z" />
+					<path d="M12,6c-0.6,0-1,0.4-1,1v18c0,0.6,0.4,1,1,1s1-0.4,1-1V7C13,6.4,12.6,6,12,6z" />
+					<path d="M16,13c-0.6,0-1,0.4-1,1v4c0,0.6,0.4,1,1,1s1-0.4,1-1v-4C17,13.4,16.6,13,16,13z" />
+					<path d="M20,9c-0.6,0-1,0.4-1,1v12c0,0.6,0.4,1,1,1s1-0.4,1-1V10C21,9.4,20.6,9,20,9z" />
+					<path d="M24,6c-0.6,0-1,0.4-1,1v18c0,0.6,0.4,1,1,1s1-0.4,1-1V7C25,6.4,24.6,6,24,6z" />
+					<path d="M28,13c-0.6,0-1,0.4-1,1v4c0,0.6,0.4,1,1,1s1-0.4,1-1v-4C29,13.4,28.6,13,28,13z" />
+				</svg>
 				<div class="flex flex-col leading-none">
 					<span class="font-display text-2xl font-bold tracking-tight text-text-primary sm:text-3xl"
 						>freakster</span
 					>
 					<span class="mt-1 text-[10px] font-medium tracking-[0.2em] text-text-secondary uppercase">
-						B-side · vol.1
+						vol. {data.version}
 					</span>
 				</div>
 			</div>
@@ -483,17 +496,17 @@
 		{#if phase !== 'review'}
 			<div class="mt-14 sm:mt-20">
 				<p class="font-display text-xs font-medium tracking-[0.25em] text-primary uppercase">
-					Side A · turn it up
+					turn it up
 				</p>
 				<h1
 					class="font-display mt-4 text-5xl leading-[0.95] font-bold tracking-tight text-text-primary sm:text-7xl"
 				>
 					Your playlist,<br />
-					<span class="text-primary">printed loud.</span>
+					<span class="text-primary">ready to freak.</span>
 				</h1>
 				<p class="mt-6 max-w-xl text-base leading-relaxed text-text-secondary sm:text-lg">
 					Drop a Spotify playlist. We pull the tracks, dig up release dates, and hand you back
-					foldable song cards. Ready for game night.
+					foldable song cards.
 				</p>
 			</div>
 		{/if}
@@ -517,13 +530,13 @@
 							bind:value={playlistRef}
 							placeholder="paste a spotify playlist url"
 							disabled={isRunning || !data.spotifyConnected}
-							class="w-full flex-1 rounded-lg bg-transparent px-4 py-3 text-base text-text-primary outline-none placeholder:text-text-secondary focus:outline-none focus-visible:outline-none disabled:opacity-50 sm:text-lg"
+							class="m-1 w-full flex-1 rounded-lg bg-transparent px-4 py-3 text-base text-text-primary outline-none placeholder:text-text-secondary focus:outline-none focus-visible:outline-none disabled:opacity-50 sm:text-lg"
 						/>
 
 						<button
 							type="submit"
-							disabled={isRunning || !data.spotifyConnected}
-							class="inline-flex shrink-0 items-center justify-center gap-2 rounded-xl bg-primary px-6 py-3 text-sm font-semibold text-text-on-primary transition-all duration-200 hover:bg-primary-hover active:bg-primary-active disabled:cursor-not-allowed disabled:bg-surface-3 disabled:text-text-secondary"
+							disabled={isRunning || !data.spotifyConnected || !isValidPlaylistRef}
+							class="inline-flex shrink-0 items-center justify-center gap-2 rounded-xl bg-primary px-6 py-3.5 text-sm font-semibold text-text-on-primary transition-all duration-200 hover:bg-primary-hover active:bg-primary-active disabled:cursor-not-allowed disabled:bg-surface-3 disabled:text-text-secondary sm:py-4"
 						>
 							{#if isRunning}
 								<svg class="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none">
@@ -544,7 +557,7 @@
 								</svg>
 								Spinning up
 							{:else}
-								Drop the needle
+								Get freaky
 								<svg
 									viewBox="0 0 24 24"
 									fill="none"
@@ -567,9 +580,7 @@
 							Connect Spotify first, then paste any playlist URL, URI, or ID.
 						</p>
 					{:else if phase === 'idle'}
-						<p class="mt-3 text-sm text-text-secondary">
-							Works with public playlists. We'll pull tracks and look up release dates.
-						</p>
+						<p class="mt-3 text-sm text-text-secondary">Works with public playlists.</p>
 					{/if}
 				</form>
 
@@ -999,7 +1010,7 @@
 		<!-- Footer mark -->
 		<footer class="mt-auto pt-16">
 			<p class="text-[10px] font-medium tracking-[0.2em] text-text-secondary uppercase">
-				Pressed in your browser · not affiliated with spotify
+				Pressed in your browser · not affiliated with spotify · not affiliated with hitster
 			</p>
 		</footer>
 	</div>
