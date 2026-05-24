@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Playlist Tracks",
+  "type": "array",
+  "items": {
+    "type": "object",
+    "properties": {
+      "artist_name": {
+        "type": "string",
+        "minLength": 1
+      },
+      "song_name": {
+        "type": "string",
+        "minLength": 1
+      },
+      "spotify_url": {
+        "type": "string",
+        "format": "uri",
+        "pattern": "^https://open\\.spotify\\.com/track/[A-Za-z0-9]+$"
+      },
+      "isrc": {
+        "type": "string",
+        "pattern": "^[A-Z]{2}[A-Z0-9]{3}[0-9]{7}$"
+      },
+      "release_date": {
+        "type": "string",
+        "format": "date"
+      }
+    },
+    "required": [
+      "artist_name",
+      "song_name",
+      "spotify_url",
+      "isrc",
+      "release_date"
+    ],
+    "additionalProperties": false
+  }
+}
