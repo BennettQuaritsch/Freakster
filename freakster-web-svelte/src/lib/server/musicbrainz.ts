@@ -71,15 +71,12 @@ function isFullDate(value: string | null | undefined): value is string {
 
 export async function findFirstReleaseDateByIsrc(isrc: string | null): Promise<string | null> {
 	if (!isrc) {
-		console.log(`[MusicBrainz] Skipping fetch: no ISRC provided`);
 		return null;
 	}
 
 	const endpoint =
 		`https://musicbrainz.org/ws/2/recording?query=${encodeURIComponent(`isrc:${isrc}`)}` +
 		`&inc=releases&fmt=json&limit=100&client=${MUSICBRAINZ_CLIENT_NAME}&client_version=${MUSICBRAINZ_CLIENT_VERSION}`;
-
-	console.log(`[MusicBrainz] Fetching release dates for ISRC: ${isrc} -> ${endpoint}`);
 
 	try {
 		const response = await fetchMusicBrainz(endpoint);
@@ -93,8 +90,6 @@ export async function findFirstReleaseDateByIsrc(isrc: string | null): Promise<s
 
 		const payload = (await response.json()) as MusicBrainzIsrcResponse;
 		const recordings = payload.recordings ?? [];
-
-		console.log(`[MusicBrainz] Found ${recordings.length} recordings for ISRC: ${isrc}`);
 
 		const candidateDates: string[] = [];
 		for (const recording of recordings) {
@@ -111,14 +106,11 @@ export async function findFirstReleaseDateByIsrc(isrc: string | null): Promise<s
 		}
 
 		if (candidateDates.length === 0) {
-			console.log(`[MusicBrainz] No full release dates found for ISRC: ${isrc}`);
 			return null;
 		}
 
 		candidateDates.sort();
-		const earliestDate = candidateDates[0] ?? null;
-		console.log(`[MusicBrainz] Found earliest release date for ISRC ${isrc}: ${earliestDate}`);
-		return earliestDate;
+		return candidateDates[0] ?? null;
 	} catch (error) {
 		console.error(`[MusicBrainz] Error fetching data for ISRC ${isrc}:`, error);
 		throw error;
@@ -130,29 +122,19 @@ export type EnrichReleaseDatesProgress = {
 	total: number;
 };
 
-type EnrichReleaseDatesProgressCallback = (progress: EnrichReleaseDatesProgress) => void;
-
-type EnrichReleaseDatesOptions = {
-	onProgress?: EnrichReleaseDatesProgressCallback;
+export type EnrichReleaseDatesOptions = {
+	onProgress?: (progress: EnrichReleaseDatesProgress) => void;
 };
 
 export async function enrichReleaseDates(
 	songs: SongCardData[],
-	onProgressOrOptions?: EnrichReleaseDatesProgressCallback | EnrichReleaseDatesOptions
+	options: EnrichReleaseDatesOptions = {}
 ): Promise<SongCardData[]> {
-	const onProgress: EnrichReleaseDatesProgressCallback | undefined =
-		typeof onProgressOrOptions === 'function'
-			? onProgressOrOptions
-			: onProgressOrOptions?.onProgress;
-
-	console.log(`[MusicBrainz] Starting release date enrichment for ${songs.length} songs...`);
+	const { onProgress } = options;
 	const enriched: SongCardData[] = [];
 
 	for (let index = 0; index < songs.length; index += 1) {
 		const song = songs[index];
-		console.log(
-			`[MusicBrainz] Processing song ${index + 1}/${songs.length}: ${song.song_name} by ${song.artist_name} (ISRC: ${song.isrc})`
-		);
 		const releaseDate = await findFirstReleaseDateByIsrc(song.isrc).catch(() => null);
 		enriched.push({ ...song, release_date: releaseDate ?? song.release_date });
 		onProgress?.({
@@ -165,6 +147,5 @@ export async function enrichReleaseDates(
 		}
 	}
 
-	console.log(`[MusicBrainz] Finished enrichment`);
 	return enriched;
 }

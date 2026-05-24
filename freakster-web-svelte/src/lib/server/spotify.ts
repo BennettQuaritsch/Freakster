@@ -76,10 +76,8 @@ export type PlaylistTracksProgress = {
 	playlist?: PlaylistMetadata;
 };
 
-type PlaylistTracksProgressCallback = (progress: PlaylistTracksProgress) => void;
-
-type PlaylistTracksProgressOptions = {
-	onProgress?: PlaylistTracksProgressCallback;
+export type PlaylistTracksProgressOptions = {
+	onProgress?: (progress: PlaylistTracksProgress) => void;
 };
 
 class SpotifyApiError extends Error {
@@ -605,13 +603,9 @@ function createPlaylistTracksUrl(playlistId: string): string {
 export async function getPlaylistTracks(
 	event: Pick<RequestEvent, 'url' | 'cookies'>,
 	playlistRef: string,
-	onProgressOrOptions?: PlaylistTracksProgressCallback | PlaylistTracksProgressOptions
+	options: PlaylistTracksProgressOptions = {}
 ): Promise<PlaylistTracksResult> {
-	const onProgress: PlaylistTracksProgressCallback | undefined =
-		typeof onProgressOrOptions === 'function'
-			? onProgressOrOptions
-			: onProgressOrOptions?.onProgress;
-
+	const { onProgress } = options;
 	const playlistId = extractPlaylistId(playlistRef);
 	let token = await getValidSpotifyAccessToken(event);
 	if (!token) {
