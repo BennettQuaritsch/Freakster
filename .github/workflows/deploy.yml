@@ -40,6 +40,8 @@ jobs:
 
       - name: Build (Vercel)
         run: vercel build --token=${{ secrets.VERCEL_TOKEN }}
+        env:
+          VERCEL: '1'
 
       - name: Deploy to Vercel (preview)
         run: vercel deploy --prebuilt --token=${{ secrets.VERCEL_TOKEN }}
