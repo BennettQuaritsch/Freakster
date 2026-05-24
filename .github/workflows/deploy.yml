@@ -3,10 +3,17 @@ name: Deploy to Vercel
 on:
   push:
     branches: [vercel-pipeline]
+    paths:
+      - 'freakster-web-svelte/**'
+      - '.github/workflows/deploy.yml'
 
 concurrency:
   group: vercel-preview-${{ github.ref }}
   cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: freakster-web-svelte
 
 jobs:
   deploy:
@@ -21,6 +28,7 @@ jobs:
         with:
           node-version: 22
           cache: npm
+          cache-dependency-path: freakster-web-svelte/package-lock.json
 
       - run: npm ci
 
