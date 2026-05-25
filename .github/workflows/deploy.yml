@@ -22,9 +22,9 @@ jobs:
       VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
       VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: 22
           cache: npm
@@ -40,8 +40,6 @@ jobs:
 
       - name: Build (Vercel)
         run: vercel build --token=${{ secrets.VERCEL_TOKEN }}
-        env:
-          VERCEL: '1'
 
       - name: Deploy to Vercel (preview)
         run: vercel deploy --prebuilt --token=${{ secrets.VERCEL_TOKEN }}
