@@ -1,5 +1,8 @@
-import adapter from '@sveltejs/adapter-node';
+import nodeAdapter from '@sveltejs/adapter-node';
+import vercelAdapter from '@sveltejs/adapter-vercel';
 import { relative, sep } from 'node:path';
+
+const adapter = process.env.VERCEL_ENV ? vercelAdapter({ runtime: 'nodejs22.x' }) : nodeAdapter();
 
 /** @type {import('@sveltejs/kit').Config} */
 const config = {
@@ -13,7 +16,7 @@ const config = {
 			return isExternalLibrary ? undefined : true;
 		}
 	},
-	kit: { adapter: adapter() }
+	kit: { adapter }
 };
 
 export default config;
