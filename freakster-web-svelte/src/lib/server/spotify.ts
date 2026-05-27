@@ -62,6 +62,20 @@ type SpotifyTokenResponse = {
 	scope?: string;
 };
 
+type SpotifyTokenError = {
+	error: string;
+	error_description?: string;
+};
+
+export type SpotifyTokenRelayResult = {
+	status: number;
+	body: SpotifyTokenResponse | SpotifyTokenError;
+};
+
+function isTokenError(body: SpotifyTokenResponse | SpotifyTokenError): body is SpotifyTokenError {
+	return typeof (body as SpotifyTokenError).error === 'string';
+}
+
 export type PlaylistTracksResult = {
 	playlist: PlaylistMetadata;
 	songs: SongCardData[];
@@ -237,7 +251,7 @@ function persistSpotifyTokens(
 	}
 }
 
-async function requestSpotifyToken(body: URLSearchParams): Promise<SpotifyTokenResponse> {
+async function requestSpotifyToken(body: URLSearchParams): Promise<SpotifyTokenRelayResult> {
 	const spotifyEnv = getSpotifyEnv();
 
 	const response = await fetch(SPOTIFY_TOKEN_URL, {
@@ -249,11 +263,50 @@ async function requestSpotifyToken(body: URLSearchParams): Promise<SpotifyTokenR
 		body
 	});
 
-	if (!response.ok) {
-		throw new Error(`Spotify token request failed: ${response.status} ${response.statusText}`);
-	}
+	const parsed = (await response.json().catch(() => ({ error: 'invalid_response' }))) as
+		| SpotifyTokenResponse
+		| SpotifyTokenError;
 
-	return (await response.json()) as SpotifyTokenResponse;
+	return { status: response.status, body: parsed };
+}
+
+function unwrapSpotifyToken(result: SpotifyTokenRelayResult): SpotifyTokenResponse {
+	if (result.status < 200 || result.status >= 300 || isTokenError(result.body)) {
+		const detail = isTokenError(result.body)
+			? `${result.body.error}${result.body.error_description ? `: ${result.body.error_description}` : ''}`
+			: '';
+		throw new Error(`Spotify token request failed: ${result.status}${detail ? ` — ${detail}` : ''}`);
+	}
+	return result.body;
+}
+
+function getIOSRedirectUri(): string {
+	const value = env.SPOTIFY_IOS_REDIRECT_URI ?? '';
+	if (!value) {
+		throw new Error('Missing SPOTIFY_IOS_REDIRECT_URI in environment');
+	}
+	return value;
+}
+
+export async function swapAuthorizationCodeForIOS(code: string): Promise<SpotifyTokenRelayResult> {
+	return requestSpotifyToken(
+		new URLSearchParams({
+			grant_type: 'authorization_code',
+			code,
+			redirect_uri: getIOSRedirectUri()
+		})
+	);
+}
+
+export async function refreshIOSAccessToken(
+	refreshToken: string
+): Promise<SpotifyTokenRelayResult> {
+	return requestSpotifyToken(
+		new URLSearchParams({
+			grant_type: 'refresh_token',
+			refresh_token: refreshToken
+		})
+	);
 }
 
 export async function exchangeAuthorizationCode(
@@ -268,12 +321,14 @@ export async function exchangeAuthorizationCode(
 
 	event.cookies.delete(OAUTH_STATE_COOKIE, cookieOptions(event));
 
-	const payload = await requestSpotifyToken(
-		new URLSearchParams({
-			grant_type: 'authorization_code',
-			code,
-			redirect_uri: getSpotifyEnv().redirectUri
-		})
+	const payload = unwrapSpotifyToken(
+		await requestSpotifyToken(
+			new URLSearchParams({
+				grant_type: 'authorization_code',
+				code,
+				redirect_uri: getSpotifyEnv().redirectUri
+			})
+		)
 	);
 
 	if (!hasRequiredScopes(payload.scope)) {
@@ -295,11 +350,13 @@ async function refreshAccessToken(
 	}
 
 	try {
-		const payload = await requestSpotifyToken(
-			new URLSearchParams({
-				grant_type: 'refresh_token',
-				refresh_token: refreshToken
-			})
+		const payload = unwrapSpotifyToken(
+			await requestSpotifyToken(
+				new URLSearchParams({
+					grant_type: 'refresh_token',
+					refresh_token: refreshToken
+				})
+			)
 		);
 
 		const grantedScope = payload.scope ?? event.cookies.get(SCOPE_COOKIE) ?? '';

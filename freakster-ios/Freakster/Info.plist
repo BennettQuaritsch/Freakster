@@ -23,5 +23,7 @@
 	<string>$(SPOTIFY_CLIENT_ID)</string>
 	<key>SPOTIFY_REDIRECT_URL</key>
 	<string>freakster://spotify-auth-callback</string>
+	<key>FREAKSTER_API_BASE_URL</key>
+	<string>$(FREAKSTER_API_BASE_URL)</string>
 </dict>
 </plist>
