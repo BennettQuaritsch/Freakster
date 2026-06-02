@@ -32,8 +32,23 @@ final class SpotifyManager: NSObject {
         return url
     }()
 
+    private static let apiBaseURL: URL = {
+        guard let raw = Bundle.main.infoDictionary?["FREAKSTER_API_BASE_URL"] as? String else {
+            fatalError("FREAKSTER_API_BASE_URL not found in Info.plist. Did you set up Config.xcconfig?")
+        }
+        let trimmed = raw.trimmingCharacters(in: CharacterSet(charactersIn: "\" /"))
+        guard !trimmed.isEmpty, let url = URL(string: trimmed) else {
+            fatalError("Invalid or empty FREAKSTER_API_BASE_URL: \(raw)")
+        }
+        return url
+    }()
+
     private static let keychainService = "com.freakster.spotify"
-    private static let keychainAccount = "access_token"
+    private static let accessTokenAccount = "access_token"
+    private static let refreshTokenAccount = "refresh_token"
+    private static let expiresAtAccount = "expires_at"
+
+    private static let requestedScopes: SPTScope = [.appRemoteControl]
 
     // MARK: - Published State
 
@@ -50,24 +65,19 @@ final class SpotifyManager: NSObject {
 
     private let configuration: SPTConfiguration
     private var appRemote: SPTAppRemote
+    @ObservationIgnored
+    private lazy var sessionManager: SPTSessionManager = {
+        SPTSessionManager(configuration: self.configuration, delegate: self)
+    }()
 
-    private var accessToken: String? {
-        get { keychainRetrieve() }
-        set {
-            if let token = newValue {
-                keychainStore(token)
-            } else {
-                keychainDelete()
-            }
-        }
-    }
-
-    /// Track the last played URI to avoid re-triggering the same scan
+    /// Track the last played URI to avoid re-triggering the same scan.
     private var lastPlayedURI: String?
     private var lastPlayedTime: Date?
-    private var didAttemptTokenConnect = false
-    private var didAttemptAuthFallback = false
+
     private var intentionallyDisconnecting = false
+
+    /// Single-flight guard so concurrent callers don't trigger multiple /refresh requests.
+    private var refreshTask: Task<String?, Never>?
 
     // MARK: - Initialization
 
@@ -77,35 +87,78 @@ final class SpotifyManager: NSObject {
             redirectURL: Self.redirectURL
         )
         configuration.playURI = ""
+        configuration.tokenSwapURL = Self.apiBaseURL.appendingPathComponent("api/spotify/ios/swap")
 
         appRemote = SPTAppRemote(configuration: configuration, logLevel: .debug)
 
         super.init()
 
         appRemote.delegate = self
+
+        // Legacy migration: an install from before refresh-token support has only an
+        // access_token in keychain. That token is useless without a refresh token; nuke
+        // it so connect() drops cleanly into the SPTSessionManager flow.
+        if keychainRetrieve(account: Self.accessTokenAccount) != nil,
+           keychainRetrieve(account: Self.refreshTokenAccount) == nil {
+            keychainDelete(account: Self.accessTokenAccount)
+            keychainDelete(account: Self.expiresAtAccount)
+            print("[Freakster] Cleared legacy access token (no refresh token paired); re-auth required")
+        }
+
+        // If we have a refresh_token cached, surface .connected immediately. The
+        // actual SDK socket connects lazily on the first play().
+        if keychainRetrieve(account: Self.refreshTokenAccount) != nil {
+            connectionStatus = .connected
+        }
     }
 
     // MARK: - Public Methods
 
-    /// Initiates the Spotify authorization flow. Opens the Spotify app briefly.
+    /// Entry point for the status-dot tap. If we already have a refresh token, ensures
+    /// the access token is valid (silent refresh) and reports ready. Otherwise launches
+    /// the one-time Spotify authorization flow.
     func connect() {
-        lastError = nil
-        didAttemptAuthFallback = false
+        Task { @MainActor in
+            intentionallyDisconnecting = false
+            lastError = nil
 
-        if let token = accessToken, !token.isEmpty {
+            if keychainRetrieve(account: Self.refreshTokenAccount) == nil {
+                connectionStatus = .connecting
+                print("[Freakster] No refresh token — starting Spotify authorization")
+                sessionManager.initiateSession(
+                    with: Self.requestedScopes,
+                    options: .default,
+                    campaign: nil
+                )
+                return
+            }
+
+            if appRemote.isConnected {
+                connectionStatus = .connected
+                return
+            }
+
             connectionStatus = .connecting
-            didAttemptTokenConnect = true
-            print("[Freakster] Connecting with stored token")
+            guard let token = await ensureValidAccessToken() else {
+                // Refresh failed — likely invalid_grant. The refresh path already cleared
+                // tokens; user can tap again to start a fresh auth flow.
+                connectionStatus = .disconnected
+                lastError = "Spotify session expired. Tap to reconnect."
+                return
+            }
             appRemote.connectionParameters.accessToken = token
-            appRemote.connect()
-            return
+            // The SDK's IPC bridge (127.0.0.1:9095) only opens after Spotify is
+            // woken via its URL scheme this app session. authorizeAndPlayURI("")
+            // performs that handshake silently when the user is already authorized.
+            let spotifyInstalled = await appRemote.authorizeAndPlayURI("")
+            if !spotifyInstalled {
+                connectionStatus = .disconnected
+                lastError = "Spotify app is not installed on this device."
+            }
         }
-
-        didAttemptTokenConnect = false
-        startAuthorizationFlow()
     }
 
-    /// Disconnects from the Spotify app remote.
+    /// User-initiated disconnect. Tears down the SDK socket and clears auth state.
     func disconnect() {
         intentionallyDisconnecting = true
         if appRemote.isConnected {
@@ -115,7 +168,11 @@ final class SpotifyManager: NSObject {
         lastError = nil
     }
 
-    /// Handles the URL callback from Spotify after authorization.
+    /// Handles the URL callback from Spotify. Two shapes show up here:
+    ///   - SPTSessionManager flow (initial auth, no refresh token yet): URL carries a
+    ///     `code` to swap for tokens via our backend.
+    ///   - SPTAppRemote flow (authorizeAndPlayURI bootstrap): URL carries an
+    ///     `access_token` directly, used to open the SDK IPC.
     func handleURL(_ url: URL) {
         print("[Freakster] handleURL called with: \(url)")
         guard isSpotifyAuthCallbackURL(url) else {
@@ -123,69 +180,100 @@ final class SpotifyManager: NSObject {
             return
         }
 
-        guard let parameters = appRemote.authorizationParameters(from: url) else {
-            print("[Freakster] No authorization parameters found in URL")
-            connectionStatus = .disconnected
-            lastError = "Invalid authorization response"
-            return
+        if let parameters = appRemote.authorizationParameters(from: url) {
+            if let token = parameters[SPTAppRemoteAccessTokenKey] {
+                print("[Freakster] Got access token from appRemote callback")
+                keychainStore(token, account: Self.accessTokenAccount)
+                let expiresIn = parseExpiresIn(from: url) ?? 3600
+                let expiresAt = Date().addingTimeInterval(TimeInterval(expiresIn) - 60)
+                keychainStore(String(expiresAt.timeIntervalSince1970), account: Self.expiresAtAccount)
+                appRemote.connectionParameters.accessToken = token
+                intentionallyDisconnecting = false
+                connectionStatus = .connecting
+                lastError = nil
+                if !appRemote.isConnected {
+                    appRemote.connect()
+                }
+                return
+            }
+            if let errorDesc = parameters[SPTAppRemoteErrorDescriptionKey] {
+                print("[Freakster] appRemote auth error: \(errorDesc)")
+                connectionStatus = .disconnected
+                lastError = errorDesc
+                return
+            }
         }
 
-        if let token = parameters[SPTAppRemoteAccessTokenKey] {
-            print("[Freakster] Got access token from callback")
-            accessToken = token
-            appRemote.connectionParameters.accessToken = token
-            connectionStatus = .connecting
-            appRemote.connect()
-            lastError = nil
-        } else if let errorDesc = parameters[SPTAppRemoteErrorDescriptionKey] {
-            print("[Freakster] Auth error: \(errorDesc)")
+        let handled = sessionManager.application(UIApplication.shared, open: url, options: [:])
+        if !handled {
+            print("[Freakster] Neither appRemote nor SessionManager handled the URL")
             connectionStatus = .disconnected
-            lastError = formatAuthorizationError(from: url, description: errorDesc)
-        } else {
-            print("[Freakster] Callback had no token or error")
-            connectionStatus = .disconnected
-            lastError = "Unexpected authorization response"
+            lastError = "Invalid authorization response"
         }
     }
 
-    /// Plays a Spotify track URI immediately.
+    private func parseExpiresIn(from url: URL) -> Int? {
+        guard let comps = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
+            return nil
+        }
+        let raw = comps.queryItems?.first(where: { $0.name == "expires_in" })?.value
+        return raw.flatMap(Int.init)
+    }
+
+    /// Plays a Spotify track URI. Refreshes tokens and reconnects the SDK socket lazily
+    /// if needed.
     func play(spotifyURI: String) {
-        // Debounce: don't replay the same URI within 3 seconds
+        // Debounce: don't replay the same URI within 3 seconds.
         if let lastURI = lastPlayedURI,
            let lastTime = lastPlayedTime,
            lastURI == spotifyURI,
            Date.now.timeIntervalSince(lastTime) < 3.0 {
             return
         }
-
         lastPlayedURI = spotifyURI
         lastPlayedTime = .now
 
-        appRemote.playerAPI?.play(spotifyURI, callback: { [weak self] _, error in
-            if let error {
-                let errorMsg = error.localizedDescription
-                print("Playback error: \(errorMsg)")
-                Task { @MainActor in
-                    self?.lastError = "Playback error: \(errorMsg)"
-                }
+        Task { @MainActor in
+            guard let token = await ensureValidAccessToken() else {
+                connectionStatus = .disconnected
+                lastError = "Spotify session expired. Tap to reconnect."
+                return
             }
-        })
+
+            appRemote.connectionParameters.accessToken = token
+
+            if appRemote.isConnected {
+                sendPlay(uri: spotifyURI)
+                return
+            }
+
+            // SDK IPC isn't up yet (Spotify wasn't woken via URL scheme this app
+            // session, so its 127.0.0.1:9095 listener is closed and connect() would
+            // get ECONNREFUSED). authorizeAndPlayURI handles both: it deep-links
+            // into Spotify to play the URI and brings back a fresh access token,
+            // which handleURL uses to open the IPC for subsequent scans.
+            intentionallyDisconnecting = false
+            connectionStatus = .connecting
+            let spotifyInstalled = await appRemote.authorizeAndPlayURI(spotifyURI)
+            if !spotifyInstalled {
+                connectionStatus = .disconnected
+                lastError = "Spotify app is not installed on this device."
+            }
+        }
     }
 
-    /// Called when the app becomes active — reconnects to Spotify.
+    /// Called when the app becomes active. Pre-refreshes the token so the first scan
+    /// after a long idle is snappy, but does not eagerly open the SDK socket.
     func sceneDidBecomeActive() {
         intentionallyDisconnecting = false
-        guard !appRemote.isConnected else { return }
-        guard let token = accessToken, !token.isEmpty else { return }
-        guard connectionStatus != .connecting else { return }
-
-        print("[Freakster] App became active, reconnecting with stored token")
-        connectionStatus = .connecting
-        appRemote.connectionParameters.accessToken = token
-        appRemote.connect()
+        Task { @MainActor in
+            guard keychainRetrieve(account: Self.refreshTokenAccount) != nil else { return }
+            _ = await ensureValidAccessToken()
+        }
     }
 
-    /// Called when the app resigns active — disconnects.
+    /// Called when the app resigns active. Cleanly tears down the SDK socket (Spotify's
+    /// recommended behavior). Auth state stays put.
     func sceneWillResignActive() {
         intentionallyDisconnecting = true
         if appRemote.isConnected {
@@ -193,32 +281,152 @@ final class SpotifyManager: NSObject {
         }
     }
 
-    // MARK: - Keychain Helper Methods
+    // MARK: - Token management
 
-    private func keychainStore(_ token: String) {
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: Self.keychainService,
-            kSecAttrAccount as String: Self.keychainAccount,
-            kSecValueData as String: token.data(using: .utf8) ?? Data(),
-            kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlockedThisDeviceOnly,
-        ]
+    @MainActor
+    private func ensureValidAccessToken() async -> String? {
+        if let token = currentAccessToken() {
+            return token
+        }
 
-        // Delete any existing item first
-        SecItemDelete(query as CFDictionary)
+        if let inflight = refreshTask {
+            return await inflight.value
+        }
 
-        // Add the new item
-        let status = SecItemAdd(query as CFDictionary, nil)
-        if status != errSecSuccess {
-            print("[Keychain] Failed to store token: \(status)")
+        let task = Task<String?, Never> { [weak self] in
+            await self?.performRefresh() ?? nil
+        }
+        refreshTask = task
+        let result = await task.value
+        refreshTask = nil
+        return result
+    }
+
+    private func currentAccessToken() -> String? {
+        guard let token = keychainRetrieve(account: Self.accessTokenAccount), !token.isEmpty else {
+            return nil
+        }
+        guard let expiresAt = storedExpiresAt(), expiresAt.timeIntervalSinceNow > 30 else {
+            return nil
+        }
+        return token
+    }
+
+    @MainActor
+    private func performRefresh() async -> String? {
+        guard let refreshToken = keychainRetrieve(account: Self.refreshTokenAccount), !refreshToken.isEmpty else {
+            print("[Freakster] No refresh token; can't refresh")
+            return nil
+        }
+
+        let url = Self.apiBaseURL.appendingPathComponent("api/spotify/ios/refresh")
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try? JSONSerialization.data(withJSONObject: ["refresh_token": refreshToken])
+
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard let http = response as? HTTPURLResponse else {
+                print("[Freakster] Refresh: unexpected non-HTTP response")
+                return nil
+            }
+
+            if http.statusCode == 400 || http.statusCode == 401 {
+                // Refresh token is invalid/revoked — force a fresh auth.
+                let body = String(data: data, encoding: .utf8) ?? "<binary>"
+                print("[Freakster] Refresh rejected (\(http.statusCode)): \(body) — clearing stored tokens")
+                clearStoredTokens()
+                return nil
+            }
+
+            guard (200...299).contains(http.statusCode) else {
+                let body = String(data: data, encoding: .utf8) ?? "<binary>"
+                print("[Freakster] Refresh non-2xx (\(http.statusCode)): \(body)")
+                return nil
+            }
+
+            guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let accessToken = json["access_token"] as? String,
+                  let expiresIn = json["expires_in"] as? Int else {
+                print("[Freakster] Refresh: malformed JSON body")
+                return nil
+            }
+
+            keychainStore(accessToken, account: Self.accessTokenAccount)
+            let expiresAt = Date().addingTimeInterval(TimeInterval(expiresIn) - 60)
+            keychainStore(String(expiresAt.timeIntervalSince1970), account: Self.expiresAtAccount)
+            if let rotated = json["refresh_token"] as? String, !rotated.isEmpty {
+                keychainStore(rotated, account: Self.refreshTokenAccount)
+            }
+            print("[Freakster] Refresh succeeded; access token good until \(expiresAt)")
+            return accessToken
+        } catch {
+            print("[Freakster] Refresh network error: \(error.localizedDescription)")
+            return nil
         }
     }
 
-    private func keychainRetrieve() -> String? {
+    private func storeSession(_ session: SPTSession) {
+        keychainStore(session.accessToken, account: Self.accessTokenAccount)
+        if !session.refreshToken.isEmpty {
+            keychainStore(session.refreshToken, account: Self.refreshTokenAccount)
+        }
+        keychainStore(String(session.expirationDate.timeIntervalSince1970), account: Self.expiresAtAccount)
+    }
+
+    private func storedExpiresAt() -> Date? {
+        guard let raw = keychainRetrieve(account: Self.expiresAtAccount),
+              let interval = TimeInterval(raw) else {
+            return nil
+        }
+        return Date(timeIntervalSince1970: interval)
+    }
+
+    private func clearStoredTokens() {
+        keychainDelete(account: Self.accessTokenAccount)
+        keychainDelete(account: Self.refreshTokenAccount)
+        keychainDelete(account: Self.expiresAtAccount)
+    }
+
+    // MARK: - Playback
+
+    private func sendPlay(uri: String) {
+        appRemote.playerAPI?.play(uri) { [weak self] _, error in
+            if let error {
+                let errorMsg = error.localizedDescription
+                print("[Freakster] Playback error: \(errorMsg)")
+                Task { @MainActor in
+                    self?.lastError = "Playback error: \(errorMsg)"
+                }
+            }
+        }
+    }
+
+    // MARK: - Keychain Helpers
+
+    private func keychainStore(_ value: String, account: String) {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: Self.keychainService,
-            kSecAttrAccount as String: Self.keychainAccount,
+            kSecAttrAccount as String: account,
+            kSecValueData as String: value.data(using: .utf8) ?? Data(),
+            kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlockedThisDeviceOnly,
+        ]
+
+        SecItemDelete(query as CFDictionary)
+
+        let status = SecItemAdd(query as CFDictionary, nil)
+        if status != errSecSuccess {
+            print("[Keychain] Failed to store \(account): \(status)")
+        }
+    }
+
+    private func keychainRetrieve(account: String) -> String? {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: Self.keychainService,
+            kSecAttrAccount as String: account,
             kSecReturnData as String: true,
         ]
 
@@ -230,46 +438,26 @@ final class SpotifyManager: NSObject {
         }
 
         if status != errSecItemNotFound {
-            print("[Keychain] Failed to retrieve token: \(status)")
+            print("[Keychain] Failed to retrieve \(account): \(status)")
         }
 
         return nil
     }
 
-    private func keychainDelete() {
+    private func keychainDelete(account: String) {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: Self.keychainService,
-            kSecAttrAccount as String: Self.keychainAccount,
+            kSecAttrAccount as String: account,
         ]
 
         let status = SecItemDelete(query as CFDictionary)
         if status != errSecSuccess && status != errSecItemNotFound {
-            print("[Keychain] Failed to delete token: \(status)")
+            print("[Keychain] Failed to delete \(account): \(status)")
         }
     }
 
-    private func startAuthorizationFlow() {
-        let spotifyURL = URL(string: "spotify://")!
-        guard UIApplication.shared.canOpenURL(spotifyURL) else {
-            connectionStatus = .disconnected
-            lastError = "Spotify app is not installed on this device"
-            print("[Freakster] Spotify app not available")
-            return
-        }
-
-        connectionStatus = .connecting
-        didAttemptTokenConnect = false
-        print("[Freakster] Starting authorization flow")
-        appRemote.authorizeAndPlayURI("") { [weak self] spotifyInstalled in
-            print("[Freakster] authorizeAndPlayURI returned: \(spotifyInstalled)")
-            guard let self else { return }
-            if !spotifyInstalled {
-                self.connectionStatus = .disconnected
-                self.lastError = "Spotify app is not installed on this device"
-            }
-        }
-    }
+    // MARK: - URL / error helpers
 
     private func isSpotifyAuthCallbackURL(_ url: URL) -> Bool {
         let redirectURL = Self.redirectURL
@@ -289,8 +477,7 @@ final class SpotifyManager: NSObject {
     }
 
     private func normalizedRedirectPath(_ path: String) -> String {
-        let trimmed = path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-        return trimmed
+        path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
     }
 
     private func shouldClearStoredToken(for error: (any Error)?) -> Bool {
@@ -302,21 +489,36 @@ final class SpotifyManager: NSObject {
             || message.contains("expired")
             || message.contains("401")
     }
+}
 
-    private var shouldSurfaceDisconnectError: Bool {
-        guard !intentionallyDisconnecting else { return false }
-        return UIApplication.shared.applicationState == .active
+// MARK: - SPTSessionManagerDelegate
+
+extension SpotifyManager: SPTSessionManagerDelegate {
+    func sessionManager(manager: SPTSessionManager, didInitiate session: SPTSession) {
+        Task { @MainActor in
+            print("[Freakster] SessionManager didInitiate; access token expires \(session.expirationDate)")
+            self.storeSession(session)
+            self.appRemote.connectionParameters.accessToken = session.accessToken
+            self.intentionallyDisconnecting = false
+            self.connectionStatus = .connecting
+            self.appRemote.connect()
+        }
     }
 
-    private func formatAuthorizationError(from url: URL, description: String) -> String {
-        let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
-        let errorCode = components?.queryItems?.first(where: { $0.name == "error" })?.value?.lowercased()
-
-        guard errorCode == "unknown_error" else {
-            return description
+    func sessionManager(manager: SPTSessionManager, didRenew session: SPTSession) {
+        Task { @MainActor in
+            print("[Freakster] SessionManager didRenew; access token expires \(session.expirationDate)")
+            self.storeSession(session)
+            self.appRemote.connectionParameters.accessToken = session.accessToken
         }
+    }
 
-        return "Spotify authorization failed (unknown_error). Check Spotify Dashboard settings: exact redirect URI, app in Development Mode with your account whitelisted, and a Premium Spotify account."
+    func sessionManager(manager: SPTSessionManager, didFailWith error: any Error) {
+        Task { @MainActor in
+            print("[Freakster] SessionManager didFailWith: \(error.localizedDescription)")
+            self.connectionStatus = .disconnected
+            self.lastError = "Spotify authorization failed: \(error.localizedDescription)"
+        }
     }
 }
 
@@ -334,45 +536,41 @@ extension SpotifyManager: SPTAppRemoteDelegate {
 
     nonisolated func appRemote(_ appRemote: SPTAppRemote, didDisconnectWithError error: (any Error)?) {
         Task { @MainActor in
-            self.connectionStatus = .disconnected
-            if let error, self.shouldSurfaceDisconnectError {
-                self.lastError = "Disconnected: \(error.localizedDescription)"
+            if let error {
                 print("[Freakster] Spotify disconnected: \(error.localizedDescription)")
             } else {
-                self.lastError = nil
                 print("[Freakster] Spotify disconnected")
+            }
+
+            // Idle drops are expected per Spotify's design. We don't reconnect proactively
+            // and we don't surface the drop as an error — the next play() handles it lazily.
+            // We only flip status away from .connected if we no longer have valid auth.
+            if self.keychainRetrieve(account: Self.refreshTokenAccount) == nil {
+                self.connectionStatus = .disconnected
             }
         }
     }
 
     nonisolated func appRemote(_ appRemote: SPTAppRemote, didFailConnectionAttemptWithError error: (any Error)?) {
         Task { @MainActor in
-            self.connectionStatus = .disconnected
-
-            if self.shouldClearStoredToken(for: error) {
-                self.accessToken = nil
-                print("[Freakster] Cleared stored token due to auth-related error")
+            if let error {
+                print("[Freakster] Spotify connection failed: \((error as NSError).domain) \((error as NSError).code) — \(error.localizedDescription)")
+            } else {
+                print("[Freakster] Spotify connection failed (no error details)")
             }
 
-            if self.didAttemptTokenConnect && !self.didAttemptAuthFallback {
-                self.didAttemptAuthFallback = true
-                self.accessToken = nil
-                print("[Freakster] Stored-token connect failed, retrying with fresh authorization")
-                self.startAuthorizationFlow()
+            if self.shouldClearStoredToken(for: error) {
+                self.clearStoredTokens()
+                self.connectionStatus = .disconnected
+                self.lastError = "Spotify session expired. Tap to reconnect."
                 return
             }
 
-            if let error {
-                let errorMsg = "Connection failed: \(error.localizedDescription)"
-                self.lastError = errorMsg
-                print("[Freakster] Spotify connection failed")
-                print("[Freakster] Error: \(error)")
-                print("[Freakster] Error domain: \((error as NSError).domain)")
-                print("[Freakster] Error code: \((error as NSError).code)")
-            } else {
-                self.lastError = "Connection failed"
-                print("[Freakster] Spotify connection failed (no error details)")
-            }
+            // IPC handshake failed. Status now reflects reality so the dot stops
+            // claiming we're ready; user can tap to retry, which re-bootstraps via
+            // authorizeAndPlayURI.
+            self.connectionStatus = .disconnected
+            self.lastError = "Couldn't reach Spotify. Make sure Spotify is open on your phone, then try again."
         }
     }
 }

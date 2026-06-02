@@ -5,3 +5,9 @@
 // Get your client ID from: https://developer.spotify.com/dashboard/applications
 SPOTIFY_CLIENT_ID = YOUR_SPOTIFY_CLIENT_ID_HERE
 SPOTIFY_REDIRECT_URL = freakster://spotify-auth-callback
+
+// Base URL of the freakster-web-svelte backend (no trailing slash).
+// During dev with the simulator: http:/$()/127.0.0.1:5173
+// During dev with a physical device: an ngrok/tunnel URL or your LAN IP, e.g. https:/$()/freakster.ngrok.app
+// xcconfig treats // as a comment, so the // inside the URL is escaped as /$()/.
+FREAKSTER_API_BASE_URL = https:/$()/your-freakster-host.example.com
