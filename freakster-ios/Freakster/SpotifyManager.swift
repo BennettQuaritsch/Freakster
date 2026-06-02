@@ -322,9 +322,8 @@ final class SpotifyManager: NSObject {
         let url = Self.apiBaseURL.appendingPathComponent("api/spotify/ios/refresh")
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
-        request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
-        request.httpBody = "refresh_token=\(refreshToken.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? "")"
-            .data(using: .utf8)
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try? JSONSerialization.data(withJSONObject: ["refresh_token": refreshToken])
 
         do {
             let (data, response) = try await URLSession.shared.data(for: request)
