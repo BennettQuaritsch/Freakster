@@ -74,10 +74,6 @@ final class SpotifyManager: NSObject {
     private var lastPlayedURI: String?
     private var lastPlayedTime: Date?
 
-    /// Set when play() arrives while the SDK socket is disconnected. Sent once
-    /// `appRemoteDidEstablishConnection` fires.
-    private var pendingPlayURI: String?
-
     private var intentionallyDisconnecting = false
 
     /// Single-flight guard so concurrent callers don't trigger multiple /refresh requests.
@@ -137,19 +133,27 @@ final class SpotifyManager: NSObject {
                 return
             }
 
+            if appRemote.isConnected {
+                connectionStatus = .connected
+                return
+            }
+
             connectionStatus = .connecting
-            if let token = await ensureValidAccessToken() {
-                appRemote.connectionParameters.accessToken = token
-                if !appRemote.isConnected {
-                    appRemote.connect()
-                } else {
-                    connectionStatus = .connected
-                }
-            } else {
+            guard let token = await ensureValidAccessToken() else {
                 // Refresh failed — likely invalid_grant. The refresh path already cleared
                 // tokens; user can tap again to start a fresh auth flow.
                 connectionStatus = .disconnected
                 lastError = "Spotify session expired. Tap to reconnect."
+                return
+            }
+            appRemote.connectionParameters.accessToken = token
+            // The SDK's IPC bridge (127.0.0.1:9095) only opens after Spotify is
+            // woken via its URL scheme this app session. authorizeAndPlayURI("")
+            // performs that handshake silently when the user is already authorized.
+            let spotifyInstalled = await appRemote.authorizeAndPlayURI("")
+            if !spotifyInstalled {
+                connectionStatus = .disconnected
+                lastError = "Spotify app is not installed on this device."
             }
         }
     }
@@ -157,7 +161,6 @@ final class SpotifyManager: NSObject {
     /// User-initiated disconnect. Tears down the SDK socket and clears auth state.
     func disconnect() {
         intentionallyDisconnecting = true
-        pendingPlayURI = nil
         if appRemote.isConnected {
             appRemote.disconnect()
         }
@@ -165,7 +168,11 @@ final class SpotifyManager: NSObject {
         lastError = nil
     }
 
-    /// Handles the URL callback from Spotify after the authorization bounce.
+    /// Handles the URL callback from Spotify. Two shapes show up here:
+    ///   - SPTSessionManager flow (initial auth, no refresh token yet): URL carries a
+    ///     `code` to swap for tokens via our backend.
+    ///   - SPTAppRemote flow (authorizeAndPlayURI bootstrap): URL carries an
+    ///     `access_token` directly, used to open the SDK IPC.
     func handleURL(_ url: URL) {
         print("[Freakster] handleURL called with: \(url)")
         guard isSpotifyAuthCallbackURL(url) else {
@@ -173,12 +180,44 @@ final class SpotifyManager: NSObject {
             return
         }
 
+        if let parameters = appRemote.authorizationParameters(from: url) {
+            if let token = parameters[SPTAppRemoteAccessTokenKey] {
+                print("[Freakster] Got access token from appRemote callback")
+                keychainStore(token, account: Self.accessTokenAccount)
+                let expiresIn = parseExpiresIn(from: url) ?? 3600
+                let expiresAt = Date().addingTimeInterval(TimeInterval(expiresIn) - 60)
+                keychainStore(String(expiresAt.timeIntervalSince1970), account: Self.expiresAtAccount)
+                appRemote.connectionParameters.accessToken = token
+                intentionallyDisconnecting = false
+                connectionStatus = .connecting
+                lastError = nil
+                if !appRemote.isConnected {
+                    appRemote.connect()
+                }
+                return
+            }
+            if let errorDesc = parameters[SPTAppRemoteErrorDescriptionKey] {
+                print("[Freakster] appRemote auth error: \(errorDesc)")
+                connectionStatus = .disconnected
+                lastError = errorDesc
+                return
+            }
+        }
+
         let handled = sessionManager.application(UIApplication.shared, open: url, options: [:])
         if !handled {
-            print("[Freakster] SessionManager did not recognize the URL")
+            print("[Freakster] Neither appRemote nor SessionManager handled the URL")
             connectionStatus = .disconnected
             lastError = "Invalid authorization response"
         }
+    }
+
+    private func parseExpiresIn(from url: URL) -> Int? {
+        guard let comps = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
+            return nil
+        }
+        let raw = comps.queryItems?.first(where: { $0.name == "expires_in" })?.value
+        return raw.flatMap(Int.init)
     }
 
     /// Plays a Spotify track URI. Refreshes tokens and reconnects the SDK socket lazily
@@ -205,10 +244,20 @@ final class SpotifyManager: NSObject {
 
             if appRemote.isConnected {
                 sendPlay(uri: spotifyURI)
-            } else {
-                pendingPlayURI = spotifyURI
-                intentionallyDisconnecting = false
-                appRemote.connect()
+                return
+            }
+
+            // SDK IPC isn't up yet (Spotify wasn't woken via URL scheme this app
+            // session, so its 127.0.0.1:9095 listener is closed and connect() would
+            // get ECONNREFUSED). authorizeAndPlayURI handles both: it deep-links
+            // into Spotify to play the URI and brings back a fresh access token,
+            // which handleURL uses to open the IPC for subsequent scans.
+            intentionallyDisconnecting = false
+            connectionStatus = .connecting
+            let spotifyInstalled = await appRemote.authorizeAndPlayURI(spotifyURI)
+            if !spotifyInstalled {
+                connectionStatus = .disconnected
+                lastError = "Spotify app is not installed on this device."
             }
         }
     }
@@ -227,7 +276,6 @@ final class SpotifyManager: NSObject {
     /// recommended behavior). Auth state stays put.
     func sceneWillResignActive() {
         intentionallyDisconnecting = true
-        pendingPlayURI = nil
         if appRemote.isConnected {
             appRemote.disconnect()
         }
@@ -484,11 +532,6 @@ extension SpotifyManager: SPTAppRemoteDelegate {
             self.connectionStatus = .connected
             self.lastError = nil
             print("[Freakster] Spotify connected")
-
-            if let pending = self.pendingPlayURI {
-                self.pendingPlayURI = nil
-                self.sendPlay(uri: pending)
-            }
         }
     }
 
@@ -511,9 +554,6 @@ extension SpotifyManager: SPTAppRemoteDelegate {
 
     nonisolated func appRemote(_ appRemote: SPTAppRemote, didFailConnectionAttemptWithError error: (any Error)?) {
         Task { @MainActor in
-            let hadPendingPlay = self.pendingPlayURI != nil
-            self.pendingPlayURI = nil
-
             if let error {
                 print("[Freakster] Spotify connection failed: \((error as NSError).domain) \((error as NSError).code) — \(error.localizedDescription)")
             } else {
@@ -527,11 +567,11 @@ extension SpotifyManager: SPTAppRemoteDelegate {
                 return
             }
 
-            if hadPendingPlay {
-                self.lastError = "Couldn't reach Spotify. Make sure Spotify is open on your phone, then try again."
-            } else {
-                // Background reconnect attempt failed. Stay in current status; don't yell at user.
-            }
+            // IPC handshake failed. Status now reflects reality so the dot stops
+            // claiming we're ready; user can tap to retry, which re-bootstraps via
+            // authorizeAndPlayURI.
+            self.connectionStatus = .disconnected
+            self.lastError = "Couldn't reach Spotify. Make sure Spotify is open on your phone, then try again."
         }
     }
 }
