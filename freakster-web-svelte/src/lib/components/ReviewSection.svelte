@@ -3,6 +3,7 @@
 	import type { PlaylistMetadata } from '$lib/types/api';
 
 	import StatusBanner from './StatusBanner.svelte';
+	import Tooltip from './Tooltip.svelte';
 	import { DATE_STATUS_META, type EditableSong } from './page-types';
 
 	type SongField = 'song_name' | 'artist_name' | 'release_date';
@@ -238,17 +239,19 @@
 		</button>
 
 		<div class="flex flex-wrap items-center gap-3">
-			<label
-				class="inline-flex cursor-pointer select-none items-center gap-2 rounded-xl border border-border-muted px-4 py-3 text-sm font-medium text-text-secondary transition-colors duration-200 hover:border-primary hover:text-text-primary"
-			>
-				<input
-					type="checkbox"
-					checked={duplex}
-					onchange={(event) => onDuplexChange((event.currentTarget as HTMLInputElement).checked)}
-					class="h-4 w-4 cursor-pointer accent-primary"
-				/>
-				<span>Double-sided Print</span>
-			</label>
+			<Tooltip text="Prints in landscape · duplex: long-edge binding">
+				<label
+					class="inline-flex cursor-pointer select-none items-center gap-2 rounded-xl border border-border-muted px-4 py-3 text-sm font-medium text-text-secondary transition-colors duration-200 hover:border-primary hover:text-text-primary"
+				>
+					<input
+						type="checkbox"
+						checked={duplex}
+						onchange={(event) => onDuplexChange((event.currentTarget as HTMLInputElement).checked)}
+						class="h-4 w-4 cursor-pointer accent-primary"
+					/>
+					<span>Double-sided Print</span>
+				</label>
+			</Tooltip>
 			<button
 				type="button"
 				onclick={onExportJson}
