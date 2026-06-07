@@ -37,6 +37,7 @@
 
 	let editedSongs = $state<EditableSong[]>([]);
 	let isPdfExporting = $state(false);
+	let duplex = $state(false);
 
 	let pollTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -87,6 +88,7 @@
 		progressCurrent = 0;
 		progressTotal = null;
 		isPdfExporting = false;
+		duplex = false;
 		progressMessage = data.spotifyConnected
 			? 'Spotify connected. Load a playlist to start.'
 			: 'Paste a Spotify playlist to load and enrich songs.';
@@ -292,7 +294,11 @@
 				headers: {
 					'Content-Type': 'application/json'
 				},
-				body: JSON.stringify({ songs: payloadSongs })
+				body: JSON.stringify({
+					songs: payloadSongs,
+					playlistName: playlistMetadata.name?.trim() || null,
+					duplex
+				})
 			});
 
 			if (!response.ok) {
@@ -403,6 +409,7 @@
 				{isPdfExporting}
 				{exportError}
 				{exportSuccess}
+				{duplex}
 				onUpdate={updateSongField}
 				onExportPdf={() => {
 					void exportPdf();
@@ -410,6 +417,9 @@
 				onExportJson={exportJson}
 				onReset={resetWorkflow}
 				onImageError={markImageUnavailable}
+				onDuplexChange={(value) => {
+					duplex = value;
+				}}
 			/>
 		{/if}
 

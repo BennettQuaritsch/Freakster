@@ -10,6 +10,7 @@ const MAX_SONG_NAME_LENGTH = 256;
 const MAX_SPOTIFY_URL_LENGTH = 512;
 const MAX_ISRC_LENGTH = 64;
 const MAX_RELEASE_DATE_LENGTH = 10;
+const MAX_PLAYLIST_NAME_LENGTH = 256;
 
 const requiredString = (field: string, maxLength: number) =>
 	z
@@ -52,8 +53,16 @@ const songSchema = z
 	});
 
 const payloadSchema = z.object({
-	songs: z.array(songSchema).min(1, 'No songs available for PDF generation.').max(MAX_SONGS)
+	songs: z.array(songSchema).min(1, 'No songs available for PDF generation.').max(MAX_SONGS),
+	playlistName: optionalNullableString('playlistName', MAX_PLAYLIST_NAME_LENGTH),
+	duplex: z.boolean()
 });
+
+export type SongCardsPayload = {
+	songs: SongCardData[];
+	playlistName: string | null;
+	duplex: boolean;
+};
 
 function formatPath(path: PropertyKey[]): string {
 	const safePath = path.filter(
@@ -96,11 +105,15 @@ function firstIssueMessage(error: z.ZodError): string {
 	return `${formatPath(issue.path)}: ${issue.message}`;
 }
 
-export function parseSongCardsPayload(payload: unknown): SongCardData[] {
+export function parseSongCardsPayload(payload: unknown): SongCardsPayload {
 	const parsed = payloadSchema.safeParse(payload);
 	if (!parsed.success) {
 		badRequest(firstIssueMessage(parsed.error), 'INVALID_PAYLOAD');
 	}
 
-	return parsed.data.songs.map((song) => ({ ...song }));
+	return {
+		songs: parsed.data.songs.map((song) => ({ ...song })),
+		playlistName: parsed.data.playlistName,
+		duplex: parsed.data.duplex
+	};
 }
