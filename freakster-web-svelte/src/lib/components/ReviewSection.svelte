@@ -14,11 +14,13 @@
 		isPdfExporting: boolean;
 		exportError: string;
 		exportSuccess: string;
+		duplex: boolean;
 		onUpdate: (index: number, field: SongField, value: string) => void;
 		onExportPdf: () => void;
 		onExportJson: () => void;
 		onReset: () => void;
 		onImageError: () => void;
+		onDuplexChange: (value: boolean) => void;
 	};
 
 	const {
@@ -28,11 +30,13 @@
 		isPdfExporting,
 		exportError,
 		exportSuccess,
+		duplex,
 		onUpdate,
 		onExportPdf,
 		onExportJson,
 		onReset,
-		onImageError
+		onImageError,
+		onDuplexChange
 	}: Props = $props();
 
 	const songStatuses = $derived(editedSongs.map((song) => classifyReleaseDate(song.release_date)));
@@ -234,6 +238,17 @@
 		</button>
 
 		<div class="flex flex-wrap items-center gap-3">
+			<label
+				class="inline-flex cursor-pointer select-none items-center gap-2 rounded-xl border border-border-muted px-4 py-3 text-sm font-medium text-text-secondary transition-colors duration-200 hover:border-primary hover:text-text-primary"
+			>
+				<input
+					type="checkbox"
+					checked={duplex}
+					onchange={(event) => onDuplexChange((event.currentTarget as HTMLInputElement).checked)}
+					class="h-4 w-4 cursor-pointer accent-primary"
+				/>
+				<span>Double-sided Print</span>
+			</label>
 			<button
 				type="button"
 				onclick={onExportJson}

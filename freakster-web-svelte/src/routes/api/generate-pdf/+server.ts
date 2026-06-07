@@ -1,4 +1,4 @@
-import { createSongCardsBatch } from '$lib/server/card-render';
+import { createSongCardsBatch, createSongCardsBatchDuplex } from '$lib/server/card-render';
 import { parseJsonBody, requireSpotifyAuth } from '$lib/server/guards';
 import { AppHttpError, toErrorResponse } from '$lib/server/http-errors';
 import { buildCardsPdf } from '$lib/server/pdf';
@@ -8,16 +8,31 @@ import type { RequestHandler } from './$types';
 export const POST: RequestHandler = async (event) => {
 	try {
 		await requireSpotifyAuth(event);
-		const payload = await parseJsonBody(event);
-		const songs = parseSongCardsPayload(payload);
+		const rawPayload = await parseJsonBody(event);
+		const { songs, playlistName, duplex } = parseSongCardsPayload(rawPayload);
 
-		const images = await createSongCardsBatch(songs);
-		const pdfBytes = await buildCardsPdf(images, {
-			orientation: 'landscape',
+		const pdfOptions = {
+			orientation: 'landscape' as const,
 			cardSideMm: 49.5,
 			marginMm: 0,
 			gapMm: 0
-		});
+		};
+
+		const pdfBytes = duplex
+			? await buildCardsPdf(
+					{
+						mode: 'duplex',
+						cards: await createSongCardsBatchDuplex(songs, { playlistName })
+					},
+					pdfOptions
+				)
+			: await buildCardsPdf(
+					{
+						mode: 'fold',
+						cards: await createSongCardsBatch(songs, { playlistName })
+					},
+					pdfOptions
+				);
 		const safePdfBytes = Uint8Array.from(pdfBytes);
 
 		const filename = `song-cards-${new Date().toISOString().slice(0, 10)}.pdf`;
@@ -27,7 +42,7 @@ export const POST: RequestHandler = async (event) => {
 				'Content-Type': 'application/pdf',
 				'Content-Disposition': `attachment; filename="${filename}"`,
 				'Cache-Control': 'no-store',
-				'X-Freakster-Card-Count': String(images.length),
+				'X-Freakster-Card-Count': String(songs.length),
 				'X-Freakster-Skipped-Count': '0'
 			}
 		});
